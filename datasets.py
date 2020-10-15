@@ -6,6 +6,7 @@ import time
 import multiprocessing as mp
 from multiprocessing import Queue
 from queue import Empty
+from queue import Full
 
 SIZE_INC = int(2048)
 CHUNK_SIZE = int(128)
@@ -16,7 +17,7 @@ class HDF5(mp.Process):
     Creates a hdf5 file with datasets of specified types.
     Provides an append method.
     '''
-    def __init__(self, filename='rec.hdf5', tables={}, bufsize=2048*16, chunksize=0, mode='w-', compression=None):
+    def __init__(self, filename='rec.hdf5', tables={}, bufsize=2048*64, chunksize=0, mode='w-', compression=None):
         super(HDF5, self).__init__()
         self.compression = compression
         self.fname = filename
@@ -89,8 +90,8 @@ class HDF5(mp.Process):
     def save(self, data):
         try:
             self.q.put_nowait(data)
-        except Queue.Full:
-            raise Queue.Full('dataset buffer overflow')
+        except Full:
+            raise Full('dataset buffer overflow')
 
     def _save(self, data):
         for col,val in data.items():
