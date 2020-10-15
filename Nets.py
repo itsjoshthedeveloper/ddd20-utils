@@ -52,9 +52,9 @@ cfg = {
 
 
 class VGG(nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, num_channels = 1):
         super(VGG, self).__init__()
-        self.features = self._make_layers(cfg[model])
+        self.features = self._make_layers(cfg[model], in_channels = num_channels)
         self.classifier = nn.Linear(1024, 1)
 
     def forward(self, x):
@@ -63,9 +63,8 @@ class VGG(nn.Module):
         out = self.classifier(out)
         return out
 
-    def _make_layers(self, cfg):
+    def _make_layers(self, cfg, in_channels = 1):
         layers = []
-        in_channels = 1
         for x in cfg:
             if x == 'M':
                 layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
@@ -77,17 +76,17 @@ class VGG(nn.Module):
         layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
         return nn.Sequential(*layers)
 
-def VGG19():
-    return VGG("VGG19")
+def VGG19(num_channels = 1):
+    return VGG("VGG19", num_channels = num_channels)
 
-def VGG16():
-    return VGG("VGG16")
+def VGG16(num_channels = 1):
+    return VGG("VGG16", num_channels = num_channels)
 
-def VGG13():
-    return VGG("VGG13")
+def VGG13(num_channels = 1):
+    return VGG("VGG13", num_channels = num_channels)
 
-def VGG11():
-    return VGG("VGG11")
+def VGG11(num_channels = 1):
+    return VGG("VGG11", num_channels = num_channels)
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -149,11 +148,11 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=1):
+    def __init__(self, block, num_blocks, num_classes=1, num_channels = 1):
         super(ResNet, self).__init__()
         self.in_planes = 64
 
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=3,
+        self.conv1 = nn.Conv2d(num_channels, 64, kernel_size=3,
                                stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
@@ -182,24 +181,24 @@ class ResNet(nn.Module):
         return out
 
 
-def ResNet18():
-    return ResNet(BasicBlock, [2, 2, 2, 2])
+def ResNet18(num_channels=1):
+    return ResNet(BasicBlock, [2, 2, 2, 2], num_channels=num_channels)
 
 
-def ResNet34():
-    return ResNet(BasicBlock, [3, 4, 6, 3])
+def ResNet34(num_channels=1):
+    return ResNet(BasicBlock, [3, 4, 6, 3], num_channels=num_channels)
 
 
-def ResNet50():
-    return ResNet(Bottleneck, [3, 4, 6, 3])
+def ResNet50(num_channels=1):
+    return ResNet(Bottleneck, [3, 4, 6, 3], num_channels=num_channels)
 
 
-def ResNet101():
-    return ResNet(Bottleneck, [3, 4, 23, 3])
+def ResNet101(num_channels=1):
+    return ResNet(Bottleneck, [3, 4, 23, 3], num_channels=num_channels)
 
 
-def ResNet152():
-    return ResNet(Bottleneck, [3, 8, 36, 3])
+def ResNet152(num_channels=1):
+    return ResNet(Bottleneck, [3, 8, 36, 3], num_channels=num_channels)
 
 def test():
     net = VGG('VGG11')
