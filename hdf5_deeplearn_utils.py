@@ -3,8 +3,8 @@ import numpy as np
 #from scipy.misc import imresize
 from skimage.transform import resize
 from skimage.util import img_as_ubyte
+from skimage import img_as_bool
 from collections import defaultdict
-import sys
 
 def get_real_endpoint(h5f):
     if h5f['timestamp'][-1] != 0:
@@ -207,7 +207,7 @@ class HDF5VisualIterator(object):
             b += 1
 
 class MultiHDF5VisualIterator(object):
-    def flow(self, h5fs, dataset_keys, indexes_key, batch_size, shuffle=True):
+    def flow(self, h5fs, dataset_keys, indexes_key, batch_size, shuffle=True, seperate_dvs_channels=False):
         # Get some constants
         all_data_idxs = []
         dataset_lookup = {h5f:dataset_key for h5f, dataset_key in zip(h5fs, dataset_keys)}
@@ -232,7 +232,10 @@ class MultiHDF5VisualIterator(object):
                 bY.extend(h5f['steering_wheel_angle'][sorted(idxs)])
 
             # Add a single-dimensional color channel for grayscale
-            vids = np.expand_dims(vids, axis=1).astype('float32')/255.-0.5
+            if seperate_dvs_channels:
+                vids = np.array(vids)/255.-0.5
+            else:
+                vids = np.expand_dims(vids, axis=1).astype('float32')/255.-0.5
             vids[np.isnan(vids)] = 0.
             vids[np.isinf(vids)] = 0.
             bY = np.expand_dims(bY, axis=1)
@@ -243,17 +246,17 @@ def resize_int8(frame, size):
     #return imresize(frame, size)
     return img_as_ubyte(resize(frame, size))
 
-def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15]):
+def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15], seperate_dvs_channels=False):
     # Assumes data is some small amount around the mean, i.e., DVS event sums
     #return imresize((np.clip(frame, climit[0], climit[1]).astype('float32')+127), size, interp=method).astype('uint8')
 
-    print("In frame: ", frame)
-    out_frame = img_as_ubyte(resize((np.clip(frame, climit[0], climit[1]).astype('float32')+127), size))
-    print("Out frame: ", out_frame)
-    sys.exit()
+    if seperate_dvs_channels:
+        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (2, size[0], size[1]), order=3)))
+    else:
+        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (size[0], size[1]), order=3)))
     return out_frame
 
-def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024):
+def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seperate_dvs_channels=False):
     chunk_generator = yield_chunker(h5f[key], chunk_size)
 
     # Set some basics
@@ -267,7 +270,10 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024):
     else:
         raise AssertionError('Unknown data type')
     # Initialize a resizable dataset to hold the output
-    resized_shape = (chunk_size,) + new_size
+    if seperate_dvs_channels:
+        resized_shape = (chunk_size, 2,) + new_size
+    else:
+        resized_shape = (chunk_size,) + new_size
     max_shape = (h5f[key].shape[0],) + resized_shape[1:]
 
     if new_key in h5f:
@@ -278,7 +284,10 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024):
     # Write all data out, one chunk at a time
     for chunk in chunk_generator:
         # Operate on the data
-        resized_chunk = np.array([do_resize(frame, new_size) for frame in chunk])
+        if seperate_dvs_channels:
+            resized_chunk = np.array([do_resize(frame, new_size, seperate_dvs_channels) for frame in chunk])
+        else:
+            resized_chunk = np.array([do_resize(frame, new_size) for frame in chunk])
         # Write the next chunk
         dset[row_idx:row_idx+chunk.shape[0]] = resized_chunk
         # Increment the row count
