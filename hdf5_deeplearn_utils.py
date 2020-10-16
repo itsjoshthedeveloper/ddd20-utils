@@ -285,7 +285,7 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seper
     for chunk in chunk_generator:
         # Operate on the data
         if seperate_dvs_channels:
-            resized_chunk = np.array([do_resize(frame, new_size, seperate_dvs_channels) for frame in chunk])
+            resized_chunk = np.array([do_resize(frame, new_size, seperate_dvs_channels=seperate_dvs_channels) for frame in chunk])
         else:
             resized_chunk = np.array([do_resize(frame, new_size) for frame in chunk])
         # Write the next chunk

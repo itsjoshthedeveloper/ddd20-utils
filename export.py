@@ -189,7 +189,7 @@ if __name__ == '__main__':
                     # take n events
                     n = (times[offset:] < t_pre + args.binsize).sum()
                     sel = slice(offset, offset + n)
-                    current_row['dvs_frame'] += raster_evts(d['data'][sel])
+                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels)
                     offset += n
                     # save if we're in the middle of a packet, otherwise
                     # wait for more data
@@ -204,7 +204,7 @@ if __name__ == '__main__':
                 for _ in range(int(num_samples)):
                     n = min(int(-args.binsize - ev_count), num_evts - offset)
                     sel = slice(offset, offset + n)
-                    current_row['dvs_frame'] += raster_evts(d['data'][sel])
+                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels)
                     if sel.stop > sel.start:
                         current_row['timestamp'] = times[sel].mean()
                     offset += n
