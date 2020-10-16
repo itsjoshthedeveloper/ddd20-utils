@@ -76,7 +76,7 @@ def get_progress_bar():
             return pbar()
     return tqdm(total=(tstop-tstart)/1e6, unit_scale=True)
 
-def raster_evts(data):
+def raster_evts(data, seperate_dvs_channels = False):
     _histrange = [(0, v) for v in DVS_SHAPE]
     pol_on = data[:,3] == 1
     pol_off = np.logical_not(pol_on)
@@ -86,6 +86,8 @@ def raster_evts(data):
     img_off, _, _ = np.histogram2d(
             data[pol_off, 2], data[pol_off, 1],
             bins=DVS_SHAPE, range=_histrange)
+    if seperate_dvs_channels:
+        return np.stack([img_on.astype(np.int16), img_off.astype(np.int16)])
     return (img_on - img_off).astype(np.int16)
 
 
@@ -99,6 +101,7 @@ if __name__ == '__main__':
     parser.add_argument('--export_aps', type=int, default=1)
     parser.add_argument('--export_dvs', type=int, default=1)
     parser.add_argument('--out_file', default='')
+    parser.add_argument('--seperate_dvs_channels', action='store_true')
     args = parser.parse_args()
 
     f_in = HDF5Stream(args.filename, export_data_vi.union({'dvs'}))
@@ -118,7 +121,10 @@ if __name__ == '__main__':
     if args.export_aps:
         dtypes['aps_frame'] = (np.uint8, DVS_SHAPE)
     if args.export_dvs:
-        dtypes['dvs_frame'] = (np.int16, DVS_SHAPE)
+        if args.seperate_dvs_channels:
+            dtypes['dvs_frame'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        else:
+            dtypes['dvs_frame'] = (np.int16, DVS_SHAPE)
 
     outfile = args.out_file or args.filename[:-5] + '_export.hdf5'
     f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
@@ -127,7 +133,10 @@ if __name__ == '__main__':
     if args.export_aps:
         current_row['aps_frame'] = np.zeros(DVS_SHAPE, dtype=np.uint8)
     if args.export_dvs:
-        current_row['dvs_frame'] = np.zeros(DVS_SHAPE, dtype=np.int16)
+        if args.seperate_dvs_channels:
+            current_row['dvs_frame'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        else:
+            current_row['dvs_frame'] = np.zeros(DVS_SHAPE, dtype=np.int16)
 
     pbar = get_progress_bar()
     sys_ts, t_pre, t_offset, ev_count, pbar_next = 0, 0, 0, 0, 0
