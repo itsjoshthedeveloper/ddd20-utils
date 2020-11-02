@@ -5,6 +5,7 @@ from skimage.transform import resize
 from skimage.util import img_as_ubyte
 from skimage import img_as_bool
 from collections import defaultdict
+import sklearn
 
 def get_real_endpoint(h5f):
     if h5f['timestamp'][-1] != 0:
@@ -13,6 +14,9 @@ def get_real_endpoint(h5f):
         # Get the last index where it changes, before it becomes zero
         end_len = np.where(abs(np.diff(h5f['timestamp']))>0)[0][-1]+1
     return end_len
+
+def get_common_endpoint(h5f_aps, h5f_dvs):
+    return min(get_real_endpoint(h5f_aps), get_real_endpoint(h5f_dvs))
 
 def chunker(seq, size):
     return (seq[pos:pos + size] for pos in xrange(0, len(seq), size))
@@ -86,6 +90,40 @@ def calc_data_std(h5f, group_key, chunksize=1024*10, axes=(0), force=False):
     if force and group_key+'_std' in h5f:
         del h5f[group_key+'_std']
     h5f.create_dataset(group_key+'_std', data=np.array(std_val))
+    return
+
+def build_simul_train_test_split(h5f_aps, h5f_dvs, train_div=5*60, test_div=1*60, force=False):
+    ep = get_common_endpoint(h5f_aps, h5f_dvs)
+    train_idxs, test_idxs = [], []
+    curr_idx, curr_ts = 0, h5f_aps['timestamp'][0]
+    print(curr_ts)
+    curr_idx, curr_ts = 0, h5f_dvs['timestamp'][0]
+    print(curr_ts)
+
+    while curr_idx < len(h5f_aps['timestamp'][:ep]) and curr_idx < len(h5f_dvs['timestamp'][:ep]):
+        # Get train indexes
+        stop_idx = np.where(h5f_aps['timestamp'][curr_idx:ep] > curr_ts+train_div)[0]
+        stop_idx = stop_idx[0] if np.any(stop_idx) else ep-curr_idx
+        train_idxs.extend(range(curr_idx, curr_idx+stop_idx))
+        curr_ts = curr_ts+train_div
+        curr_idx = curr_idx+stop_idx
+        # Get test indexes
+        stop_idx = np.where(h5f_aps['timestamp'][curr_idx:ep] > curr_ts+test_div)[0]
+        stop_idx = stop_idx[0] if np.any(stop_idx) else ep-curr_idx
+        test_idxs.extend(range(curr_idx, curr_idx+stop_idx))
+        curr_ts = curr_ts+test_div
+        curr_idx = curr_idx+stop_idx
+    # Replace as necessary
+    if force and (('train_idxs' in h5f_aps) or ('train_idxs' in h5f_dvs)):
+        del h5f_aps['train_idxs']
+        del h5f_dvs['train_idxs']
+    h5f_aps.create_dataset('train_idxs', data=np.array(train_idxs))
+    h5f_dvs.create_dataset('train_idxs', data=np.array(train_idxs))
+    if force and (('test_idxs' in h5f_aps) or ('test_idxs' in h5f_dvs)):
+        del h5f_aps['test_idxs']
+        del h5f_dvs['test_idxs']
+    h5f_aps.create_dataset('test_idxs', data=np.array(test_idxs))
+    h5f_dvs.create_dataset('test_idxs', data=np.array(test_idxs))
     return
 
 def build_train_test_split(h5f, train_div=5*60, test_div=1*60, force=False):
@@ -205,6 +243,58 @@ class HDF5VisualIterator(object):
             bY = np.expand_dims(bY, axis=1)
             yield [vid.astype('float32'), bY.astype('float32')]
             b += 1
+
+class MultiHDF5EncoderDecoderVisualIterator(object):
+    def flow(self, h5fs_aps, h5fs_dvs, dataset_keys_aps, dataset_keys_dvs, indexes_key, batch_size, shuffle=True, seperate_dvs_channels=False):
+        # Get some constants
+        all_data_idxs_aps = []
+        dataset_lookup_aps = {h5f:dataset_key for h5f, dataset_key in zip(h5fs_aps, dataset_keys_aps)}
+        for h5f in h5fs_aps:
+            for idx in np.array(h5f[indexes_key]):
+                all_data_idxs_aps.append((h5f, idx))
+        all_data_idxs_dvs = []
+        dataset_lookup_dvs = {h5f:dataset_key for h5f, dataset_key in zip(h5fs_dvs, dataset_keys_dvs)}
+        for h5f in h5fs_dvs:
+            for idx in np.array(h5f[indexes_key]):
+                all_data_idxs_dvs.append((h5f, idx))
+        num_examples_aps = len(all_data_idxs_aps)
+        num_examples_dvs = len(all_data_idxs_dvs)
+        num_batches_aps = int(np.ceil(float(num_examples_aps)/batch_size))
+        num_batches_dvs = int(np.ceil(float(num_examples_dvs)/batch_size))
+        assert num_batches_aps == num_batches_dvs
+        num_batches = num_batches_aps
+        # Shuffle the data
+        if shuffle:
+            all_data_idxs_aps, all_data_idxs_dvs = sklearn.utils.shuffle(all_data_idxs_aps, all_data_idxs_dvs)
+            # np.random.shuffle(all_data_idxs)
+        b = 0
+        while b < num_batches:
+            curr_idxs_aps = all_data_idxs_aps[b*batch_size:(b+1)*batch_size]
+            curr_idxs_dvs = all_data_idxs_dvs[b*batch_size:(b+1)*batch_size]
+            todo_dict_aps = defaultdict(list)
+            todo_dict_dvs = defaultdict(list)
+            for (h5f_aps, idx_aps), (h5f_dvs, idx_dvs) in zip(curr_idxs_aps, curr_idxs_dvs):
+                todo_dict_aps[h5f_aps].append(idx_aps)
+                todo_dict_dvs[h5f_dvs].append(idx_dvs)
+            vids_aps = []
+            vids_dvs = []
+            for (h5f_aps, idxs_aps), (h5f_dvs, idxs_dvs) in zip(todo_dict_aps.items(), todo_dict_dvs.items()):
+                vids_aps.extend(h5f_aps[dataset_lookup_aps[h5f_aps]][sorted(idxs_aps)])
+                vids_dvs.extend(h5f_dvs[dataset_lookup_dvs[h5f_dvs]][sorted(idxs_dvs)])
+
+            # Add a single-dimensional color channel for grayscale
+            vids_aps = np.expand_dims(vids_aps, axis=1).astype('float32')/255.-0.5
+            if seperate_dvs_channels:
+                vids_dvs = np.array(vids_dvs)/255.-0.5
+            else:
+                vids_dvs = np.expand_dims(vids_dvs, axis=1).astype('float32')/255.-0.5
+            vids_aps[np.isnan(vids_aps)] = 0.
+            vids_aps[np.isinf(vids_aps)] = 0.
+            vids_dvs[np.isnan(vids_dvs)] = 0.
+            vids_dvs[np.isinf(vids_dvs)] = 0.
+            yield [vids_aps.astype('float32'), vids_dvs.astype('float32')]
+            b += 1
+
 
 class MultiHDF5VisualIterator(object):
     def flow(self, h5fs, dataset_keys, indexes_key, batch_size, shuffle=True, seperate_dvs_channels=False):
