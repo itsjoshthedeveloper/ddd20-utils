@@ -76,8 +76,25 @@ def get_progress_bar():
             return pbar()
     return tqdm(total=(tstop-tstart)/1e6, unit_scale=True)
 
-def raster_evts(data, seperate_dvs_channels = False):
+def raster_evts(data, seperate_dvs_channels = False, split_timesteps = False, timesteps = 10):
     _histrange = [(0, v) for v in DVS_SHAPE]
+    if split_timesteps:
+        img = []
+        data_chunks = np.array_split(data, timesteps)
+        for i in range(timesteps):
+            pol_on = data_chunks[i][:,3] == 1
+            pol_off = np.logical_not(pol_on)
+            img_on, _, _ = np.histogram2d(
+                    data_chunks[i][pol_on, 2], data_chunks[i][pol_on, 1],
+                    bins=DVS_SHAPE, range=_histrange)
+            img_off, _, _ = np.histogram2d(
+                    data_chunks[i][pol_off, 2], data_chunks[i][pol_off, 1],
+                    bins=DVS_SHAPE, range=_histrange)
+            img.append(np.stack([img_on.astype(np.int16), img_off.astype(np.int16)]))
+        img = np.array(img)
+        # print(img.shape)
+        return img
+
     pol_on = data[:,3] == 1
     pol_off = np.logical_not(pol_on)
     img_on, _, _ = np.histogram2d(
@@ -102,6 +119,8 @@ if __name__ == '__main__':
     parser.add_argument('--export_dvs', type=int, default=1)
     parser.add_argument('--out_file', default='')
     parser.add_argument('--seperate_dvs_channels', action='store_true')
+    parser.add_argument('--split_timesteps', action='store_true')
+    parser.add_argument('--timesteps', type=int, default=10)
     args = parser.parse_args()
 
     f_in = HDF5Stream(args.filename, export_data_vi.union({'dvs'}))
@@ -121,7 +140,9 @@ if __name__ == '__main__':
     if args.export_aps:
         dtypes['aps_frame'] = (np.uint8, DVS_SHAPE)
     if args.export_dvs:
-        if args.seperate_dvs_channels:
+        if args.split_timesteps:
+            dtypes['dvs_frame'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        elif args.seperate_dvs_channels:
             dtypes['dvs_frame'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
         else:
             dtypes['dvs_frame'] = (np.int16, DVS_SHAPE)
@@ -133,7 +154,9 @@ if __name__ == '__main__':
     if args.export_aps:
         current_row['aps_frame'] = np.zeros(DVS_SHAPE, dtype=np.uint8)
     if args.export_dvs:
-        if args.seperate_dvs_channels:
+        if args.split_timesteps:
+            current_row['dvs_frame'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        elif args.seperate_dvs_channels:
             current_row['dvs_frame'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
         else:
             current_row['dvs_frame'] = np.zeros(DVS_SHAPE, dtype=np.int16)
@@ -189,7 +212,7 @@ if __name__ == '__main__':
                     # take n events
                     n = (times[offset:] < t_pre + args.binsize).sum()
                     sel = slice(offset, offset + n)
-                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels)
+                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
                     offset += n
                     # save if we're in the middle of a packet, otherwise
                     # wait for more data
