@@ -246,17 +246,19 @@ def resize_int8(frame, size):
     #return imresize(frame, size)
     return img_as_ubyte(resize(frame, size))
 
-def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15], seperate_dvs_channels=False):
+def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15], seperate_dvs_channels=False, split_timesteps=False, timesteps=10):
     # Assumes data is some small amount around the mean, i.e., DVS event sums
     #return imresize((np.clip(frame, climit[0], climit[1]).astype('float32')+127), size, interp=method).astype('uint8')
 
-    if seperate_dvs_channels:
-        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (2, size[0], size[1]), order=3)))
+    if split_timesteps:
+        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (timesteps, 2, size[0], size[1]))))
+    elif seperate_dvs_channels:
+        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (2, size[0], size[1]))))
     else:
-        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (size[0], size[1]), order=3)))
+        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (size[0], size[1]))))
     return out_frame
 
-def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seperate_dvs_channels=False):
+def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seperate_dvs_channels=False, split_timesteps=False, timesteps = 10):
     chunk_generator = yield_chunker(h5f[key], chunk_size)
 
     # Set some basics
@@ -270,7 +272,9 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seper
     else:
         raise AssertionError('Unknown data type')
     # Initialize a resizable dataset to hold the output
-    if seperate_dvs_channels:
+    if split_timesteps:
+        resized_shape = (chunk_size, timesteps, 2,) + new_size
+    elif seperate_dvs_channels:
         resized_shape = (chunk_size, 2,) + new_size
     else:
         resized_shape = (chunk_size,) + new_size
@@ -284,7 +288,9 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seper
     # Write all data out, one chunk at a time
     for chunk in chunk_generator:
         # Operate on the data
-        if seperate_dvs_channels:
+        if split_timesteps:
+            resized_chunk = np.array([do_resize(frame, new_size, split_timesteps=split_timesteps, timesteps=timesteps) for frame in chunk])
+        elif seperate_dvs_channels:
             resized_chunk = np.array([do_resize(frame, new_size, seperate_dvs_channels=seperate_dvs_channels) for frame in chunk])
         else:
             resized_chunk = np.array([do_resize(frame, new_size) for frame in chunk])
