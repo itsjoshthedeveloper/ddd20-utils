@@ -11,9 +11,11 @@ if __name__ == '__main__':
     parser.add_argument('--train_length', default=5*60, type=float)
     parser.add_argument('--test_length', default=2*60, type=float)
     parser.add_argument('--skip_mean_std', default=0, type=int)
-    parser.add_argument('--new_height', default=60, type=int)
+    parser.add_argument('--new_height', default=80, type=int)
     parser.add_argument('--new_width', default=80, type=int)
     parser.add_argument('--seperate_dvs_channels', action="store_true")
+    parser.add_argument('--split_timesteps', action='store_true')
+    parser.add_argument('--timesteps', type=int, default=10)
     args = parser.parse_args()
 
     # Set new resize
@@ -53,7 +55,7 @@ if __name__ == '__main__':
         print('Resizing DVS frames to {}...'.format(new_dvs_key))
         sys.stdout.flush()
         start_time = time.time()
-        resize_data_into_new_key(dataset, 'dvs_frame', new_dvs_key, new_size, seperate_dvs_channels=args.seperate_dvs_channels)
+        resize_data_into_new_key(dataset, 'dvs_frame', new_dvs_key, new_size, seperate_dvs_channels=args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
         print('Finished in {}s.'.format(time.time()-start_time))
 
         if not args.skip_mean_std:
