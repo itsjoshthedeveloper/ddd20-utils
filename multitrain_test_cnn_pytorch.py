@@ -17,10 +17,13 @@ if __name__ == '__main__':
     parser.add_argument('--h5files',    nargs='+', default='/home/dneil/h5fs/driving/rec1487864316_bin5k.hdf5', help='HDF5 File that has the data.')
     parser.add_argument('--run_id',       default='default', help='ID of the run, used in saving.')
     parser.add_argument('--filename',     default='driving_cnn_19.4_multi', help='Filename to save model and log to.')
+    parser.add_argument('--result_dir',     default='saved_models', help='Folder to save the model')
+    parser.add_argument('--optimizer',       default='Adam', help='Optimizer to use. Adam or  SGD')
+    parser.add_argument('--lr',       default=0.1, type=float, help='Learning Rate')
     # Control meta parameters
     parser.add_argument('--seed',         default=42, type=int, help='Initialize the random seed of the run (for reproducibility).')
-    parser.add_argument('--batch_size',   default=64, type=int, help='Batch size.')
-    parser.add_argument('--num_epochs',   default=100, type=int, help='Number of epochs to train for.')
+    parser.add_argument('--batch_size',   default=32, type=int, help='Batch size.')
+    parser.add_argument('--num_epochs',   default=30, type=int, help='Number of epochs to train for.')
     parser.add_argument('--patience',     default=4, type=int, help='How long to wait for an increase in validation error before quitting.')
     parser.add_argument('--patience_key', default='test_acc', help='What key to look at before quitting.')
     parser.add_argument('--wait_period',  default=10, type=int, help='How long to wait before looking for early stopping.')
@@ -97,8 +100,8 @@ if __name__ == '__main__':
                           'dataset': 'ddd20'}
             network = Nets_Spiking.VGG_SNN_STDB(**model_args)
     else:
-        #network = Nets.VGG16()
-        network = Nets.ResNet34(num_channels = num_channels)
+        network = Nets.VGG9(num_channels = num_channels)
+        #network = Nets.ResNet34(num_channels = num_channels)
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     network.to(device)
@@ -135,9 +138,19 @@ if __name__ == '__main__':
         print("Input Shape: {}, Output Shape: {}".format(vid_in.shape, bY.shape))
     # print(vid_in, bY)
 
+    def adjust_learning_rate(optimizer, cur_epoch):
+        # Reduce learning rate by 10 twice at epoch 30 and 60
+        if cur_epoch == int(0.5*args.num_epochs) or cur_epoch == int(args.num_epochs*0.7) or cur_epoch== int(args.num_epochs*0.9):
+            for param_group in optimizer.param_groups:
+                 param_group['lr'] /= 10
+
     loss_fn = torch.nn.MSELoss()
-    learning_rate = 0.1
-    optimizer = torch.optim.Adam(network.parameters(), lr=learning_rate)
+
+    if args.optimizer == "Adam":
+        optimizer = torch.optim.Adam(network.parameters(), lr=args.lr)
+    elif args.optimizer == "SGD":
+       optimizer = torch.optim.SGD(network.parameters(), lr=args.lr,momentum=0.9,weight_decay=1e-4)
+
     for t in range(args.num_epochs):
         train_loss = 0
         if args.encoder_decoder:
@@ -185,4 +198,6 @@ if __name__ == '__main__':
                 test_loss += loss.item()/args.batch_size
             test_loss = np.sqrt(test_loss/num_test_batches)
             print("Epoch: {}, Test Avg RMSE: {}".format(t, test_loss))
+        torch.save(network.state_dict(), os.path.join(args.result_dir, comb_filename))
+        adjust_learning_rate(optimizer, t)
 
