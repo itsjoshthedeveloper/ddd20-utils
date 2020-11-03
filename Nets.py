@@ -44,6 +44,7 @@ class CNN_sample(nn.Module):
 
 
 cfg = {
+    'VGG9':  [64, 'M', 128, 256, 'M', 256, 512, 'M', 512, 'M', 512],
     'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
@@ -55,7 +56,7 @@ class VGG(nn.Module):
     def __init__(self, model, num_channels = 1):
         super(VGG, self).__init__()
         self.features = self._make_layers(cfg[model], in_channels = num_channels)
-        self.classifier = nn.Linear(1024, 1)
+        self.classifier = nn.Linear(12800, 1)
 
     def forward(self, x):
         out = self.features(x)
@@ -87,6 +88,9 @@ def VGG13(num_channels = 1):
 
 def VGG11(num_channels = 1):
     return VGG("VGG11", num_channels = num_channels)
+
+def VGG9(num_channels = 1):
+    return VGG("VGG9", num_channels = num_channels)
 
 class BasicBlock(nn.Module):
     expansion = 1
