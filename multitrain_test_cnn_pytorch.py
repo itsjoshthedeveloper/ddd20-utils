@@ -12,7 +12,7 @@ import Nets_Spiking
 import Nets_Spiking_BNTT
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Trai a drving network.')
+    parser = argparse.ArgumentParser(description='Train a driving network.')
     # File and path naming stuff
     parser.add_argument('--h5files',    nargs='+', default='/home/dneil/h5fs/driving/rec1487864316_bin5k.hdf5', help='HDF5 File that has the data.')
     parser.add_argument('--run_id',       default='default', help='ID of the run, used in saving.')
@@ -50,13 +50,15 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_keys_aps',  nargs='+', default='aps_frame_80x80', help='Dataset key for APS.')
     parser.add_argument('--h5files_dvs',    nargs='+', help='HDF5 File that has DVS data.')
     parser.add_argument('--dataset_keys_dvs',  nargs='+', default='dvs_frame_80x80', help='Dataset key for DVS.')
+    parser.add_argument('--use_encoder', action='store_true', help='Use DVS encoder')
+    parser.add_argument('--pretrained_ed_model', default='./saved_models/driving_cnn_19.4_multi_encoder_decoder', help='Encoder Decoder pretrained model')
     args = parser.parse_args()
 
     # Set seed
     np.random.seed(args.seed)
 
     # Set the save name
-    comb_filename = '_'.join([args.filename, args.run_id])
+    comb_filename = '_'.join([args.filename, args.run_id, args.optimizer, str(args.lr)])
 
     # Load dataset
     if args.encoder_decoder:
@@ -66,10 +68,13 @@ if __name__ == '__main__':
         h5fs = [h5py.File(h5file, 'r') for h5file in args.h5files]
 
 
-    if args.seperate_dvs_channels:
+    if args.seperate_dvs_channels and args.use_encoder == False:
         num_channels = 2
     else:
         num_channels = 1
+
+
+    encoder_network = None
     if args.snn:
         if args.BNTT:
             if args.dvs:
@@ -102,9 +107,21 @@ if __name__ == '__main__':
     else:
         network = Nets.VGG9(num_channels = num_channels)
         #network = Nets.ResNet34(num_channels = num_channels)
+        if args.use_encoder:
+            model_args = {'timesteps': args.timesteps,
+                          'img_size': 80,
+                          'inp_maps': 2,
+                          'num_cls': 1,
+                          'inp_type': 'dvs',
+                          'encoder_decoder': True}
+            encoder_network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
+            encoder_network.load_state_dict(torch.load(args.pretrained_ed_model))
+            encoder_network.eval()
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     network.to(device)
+    if encoder_network:
+        encoder_network.to(device)
 
     # Precalc for announcing
     if args.encoder_decoder:
@@ -133,9 +150,13 @@ if __name__ == '__main__':
     else:
         temp = MultiHDF5VisualIterator()
         for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
-            vid_in, bY = data
+            vid_in_, bY = data
+            if args.use_encoder:
+                vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
+            else:
+                vid_in = torch.from_numpy(vid_in_).to(device)
             break
-        print("Input Shape: {}, Output Shape: {}".format(vid_in.shape, bY.shape))
+        print("Input Shape: {} -> {}, Output Shape: {}".format(vid_in_.shape, vid_in.shape, bY.shape))
     # print(vid_in, bY)
 
     def adjust_learning_rate(optimizer, cur_epoch):
@@ -166,8 +187,12 @@ if __name__ == '__main__':
             print("Epoch: {}, Train Avg Error: {}".format(t, train_loss))
         else:
             for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels= args.seperate_dvs_channels):
-                vid_in, bY = data
-                y_pred = network(torch.from_numpy(vid_in).to(device))
+                vid_in_, bY = data
+                if args.use_encoder:
+                    vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
+                else:
+                    vid_in = torch.from_numpy(vid_in_).to(device)
+                y_pred = network(vid_in)
                 # print("y", bY)
                 # print("y_pred", y_pred)
                 loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
@@ -189,10 +214,12 @@ if __name__ == '__main__':
             print("Epoch: {}, Test Avg Error: {}".format(t, test_loss))
         else:
             for data in temp.flow(h5fs, args.dataset_keys, 'test_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
-                vid_in, bY = data
-                y_pred = network(torch.from_numpy(vid_in).to(device))
-                # print("y", bY)
-                # print("y_pred", y_pred)
+                vid_in_, bY = data
+                if args.use_encoder:
+                    vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
+                else:
+                    vid_in = torch.from_numpy(vid_in_).to(device)
+                y_pred = network(vid_in)
                 loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
                 # print(t, loss.item())
                 test_loss += loss.item()/args.batch_size
