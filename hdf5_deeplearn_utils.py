@@ -6,6 +6,8 @@ from skimage.util import img_as_ubyte
 from skimage import img_as_bool
 from collections import defaultdict
 import sklearn
+import torch
+import Nets_Spiking_BNTT
 
 def get_real_endpoint(h5f):
     if h5f['timestamp'][-1] != 0:
@@ -347,6 +349,48 @@ def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15], sepera
     else:
         out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (size[0], size[1]))))
     return out_frame
+
+def dvs_to_aps(dvs_image, model, device):
+    dvs_batch = dvs_image[None, ...] # Create batch of size 1
+    with torch.no_grad():
+        aps_batch = model(torch.from_numpy(dvs_batch).to(device=device, dtype=torch.float))
+    aps_image = aps_batch[0, 0, ...]
+    return aps_image
+
+def run_dvs_to_aps_into_new_key(h5f, key, new_key, new_size, pretrained_model_path, chunk_size=1024, timesteps = 20):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model_args = {'timesteps': timesteps,
+                  'img_size': 80,
+                  'inp_maps': 2,
+                  'num_cls': 1,
+                  'inp_type': 'dvs',
+                  'encoder_decoder': True}
+    encoder_network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
+    encoder_network.load_state_dict(torch.load(pretrained_model_path))
+    encoder_network.eval()
+    encoder_network.to(device)
+    chunk_generator = yield_chunker(h5f[key], chunk_size)
+    # Set some basics
+    dtype = h5f[key].dtype
+    row_idx = 0
+    resized_shape = (chunk_size,) + new_size
+    print(resized_shape)
+    max_shape = (h5f[key].shape[0],) + resized_shape[1:]
+    print(max_shape)
+    if new_key in h5f:
+        dset = h5f[new_key]
+    else:
+        dset = h5f.create_dataset(new_key, shape=max_shape, maxshape=max_shape,
+                            chunks=resized_shape, dtype='uint8')
+    # Write all data out, one chunk at a time
+    for chunk in chunk_generator:
+        # Operate on the data
+        encoded_chunk = np.array([dvs_to_aps(frame, encoder_network, device).cpu().numpy() for frame in chunk])
+        print(encoded_chunk.shape)
+        # Write the next chunk
+        dset[row_idx:row_idx+chunk.shape[0]] = encoded_chunk
+        # Increment the row count
+        row_idx += chunk.shape[0]
 
 def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seperate_dvs_channels=False, split_timesteps=False, timesteps = 10):
     chunk_generator = yield_chunker(h5f[key], chunk_size)
