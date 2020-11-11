@@ -56,7 +56,10 @@ class VGG(nn.Module):
     def __init__(self, model, num_channels = 1):
         super(VGG, self).__init__()
         self.features = self._make_layers(cfg[model], in_channels = num_channels)
-        self.classifier = nn.Linear(12800, 1)
+        if model == 'VGG9':
+            self.classifier = nn.Linear(12800, 1)
+        else:
+            self.classifier = nn.Linear(2048, 1)
 
     def forward(self, x):
         out = self.features(x)
