@@ -7,8 +7,8 @@ from hdf5_deeplearn_utils import calc_data_mean, calc_data_std, build_train_test
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--filename')
-    parser.add_argument('--dataset_key', default="dvs_frame_80x80")
-    parser.add_argument('--pretrained_model_path', default="./saved_models/driving_cnn_19.4_multi_encoder_decoder")
+    parser.add_argument('--dataset_key', default="dvs_split_80x80")
+    parser.add_argument('--pretrained_model_path', default="./saved_models/driving_cnn_19.4_multi_encoder_decoder_SGD_0.1")
     parser.add_argument('--train_length', default=5*60, type=float)
     parser.add_argument('--test_length', default=2*60, type=float)
     parser.add_argument('--rewrite', default=0, type=int)
@@ -22,8 +22,6 @@ if __name__ == '__main__':
     new_size = (args.new_height, args.new_width)
 
     dataset = h5py.File(args.filename, 'a')
-    # print('Checking timestamps...')
-    # check_and_fix_timestamps(dataset)
 
     print('Calculating train/test split...')
     sys.stdout.flush()
