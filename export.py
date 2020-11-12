@@ -10,6 +10,7 @@ GNU LESSER GENERAL PUBLIC LICENSE Version 3.
 
 from __future__ import print_function
 import os, sys, time, argparse
+import multiprocessing as mp
 from multiprocessing import Queue
 from queue import Empty
 import numpy as np
@@ -19,6 +20,7 @@ from view import HDF5Stream, MergedStream
 from datasets import HDF5
 from interfaces.caer import DVS_SHAPE, unpack_data
 
+print("Found cpu cores:", mp.cpu_count())
 
 export_data_vi = {
         'steering_wheel_angle',
@@ -44,7 +46,9 @@ export_data_vi = {
     }
 
 export_data_dvs = {
-        'dvs_frame',
+        'dvs_accum',
+        'dvs_split',
+        'dvs_channels',
         'aps_frame',
     }
 
@@ -140,12 +144,9 @@ if __name__ == '__main__':
     if args.export_aps:
         dtypes['aps_frame'] = (np.uint8, DVS_SHAPE)
     if args.export_dvs:
-        if args.split_timesteps:
-            dtypes['dvs_frame'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
-        elif args.seperate_dvs_channels:
-            dtypes['dvs_frame'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
-        else:
-            dtypes['dvs_frame'] = (np.int16, DVS_SHAPE)
+        dtypes['dvs_split'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        dtypes['dvs_channels'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
 
     outfile = args.out_file or args.filename[:-5] + '_export.hdf5'
     f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
@@ -154,12 +155,9 @@ if __name__ == '__main__':
     if args.export_aps:
         current_row['aps_frame'] = np.zeros(DVS_SHAPE, dtype=np.uint8)
     if args.export_dvs:
-        if args.split_timesteps:
-            current_row['dvs_frame'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
-        elif args.seperate_dvs_channels:
-            current_row['dvs_frame'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
-        else:
-            current_row['dvs_frame'] = np.zeros(DVS_SHAPE, dtype=np.int16)
+        current_row['dvs_split'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        current_row['dvs_channels'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        current_row['dvs_accum'] = np.zeros(DVS_SHAPE, dtype=np.int16)
 
     pbar = get_progress_bar()
     sys_ts, t_pre, t_offset, ev_count, pbar_next = 0, 0, 0, 0, 0
@@ -191,7 +189,9 @@ if __name__ == '__main__':
                 while t_pre + args.binsize < d['timestamp'] + t_offset:
                     # aps frame is not in current bin -> save and proceed
                     f_out.save(deepcopy(current_row))
-                    current_row['dvs_frame'] = 0
+                    current_row['dvs_accum'] = 0
+                    current_row['dvs_channels'] = 0
+                    current_row['dvs_split'] = 0
                     current_row['timestamp'] = t_pre
                     t_pre += args.binsize
             else:
@@ -212,16 +212,25 @@ if __name__ == '__main__':
                     # take n events
                     n = (times[offset:] < t_pre + args.binsize).sum()
                     sel = slice(offset, offset + n)
-                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
+                    x = raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
+                    if args.split_timesteps:
+                        current_row['dvs_split'] += x
+                    elif args.seperate_dvs_channels:
+                        current_row['dvs_channels'] += x
+                    else:
+                        current_row['dvs_accum'] += x
                     offset += n
                     # save if we're in the middle of a packet, otherwise
                     # wait for more data
                     if sel.stop < num_evts:
                         current_row['timestamp'] = t_pre
                         f_out.save(deepcopy(current_row))
-                        current_row['dvs_frame'][:,:] = 0
+                        current_row['dvs_split'][:,:,:,:] = 0
+                        current_row['dvs_channels'][:,:,:] = 0
+                        current_row['dvs_accum'][:,:] = 0
                         t_pre += args.binsize
             else:
+                # ------------------ Depricated ---------------------#
                 # fixed event count mode
                 num_samples = np.ceil(-float(num_evts + ev_count)/args.binsize)
                 for _ in range(int(num_samples)):

@@ -7,7 +7,8 @@ from hdf5_deeplearn_utils import calc_data_mean, calc_data_std, build_train_test
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--filename_aps')
-    parser.add_argument('--filename_dvs')
+    parser.add_argument('--filename_dvs_accum')
+    parser.add_argument('--filename_dvs_split')
     parser.add_argument('--rewrite', default=0, type=int)
     parser.add_argument('--train_length', default=5*60, type=float)
     parser.add_argument('--test_length', default=2*60, type=float)
@@ -23,13 +24,14 @@ if __name__ == '__main__':
     new_size = (args.new_height, args.new_width)
 
     dataset_aps = h5py.File(args.filename_aps, 'a')
-    dataset_dvs = h5py.File(args.filename_dvs, 'a')
+    dataset_dvs_accum = h5py.File(args.filename_dvs_accum, 'a')
+    dataset_dvs_split = h5py.File(args.filename_dvs_split, 'a')
     # print('Checking timestamps...')
     # check_and_fix_timestamps(dataset)
 
     print('Calculating train/test split...')
     sys.stdout.flush()
-    build_simul_train_test_split(dataset_aps, dataset_dvs, train_div=args.train_length, test_div=args.test_length, force=args.rewrite)
+    build_simul_train_test_split(dataset_aps, dataset_dvs_accum, dataset_dvs_split, train_div=args.train_length, test_div=args.test_length, force=args.rewrite)
 
     if np.any(dataset_aps['aps_frame'][0]):
         new_aps_key = '{}_{}x{}'.format('aps_frame', new_size[0], new_size[1])
@@ -52,12 +54,34 @@ if __name__ == '__main__':
             calc_data_std(dataset, new_aps_key, force=args.rewrite)
             print('Finished in {}s.'.format(time.time()-start_time))
 
-    if np.any(dataset_dvs['dvs_frame'][0]):
-        new_dvs_key = '{}_{}x{}'.format('dvs_frame', new_size[0], new_size[1])
+    if np.any(dataset_dvs_accum['dvs_accum'][0]):
+        new_dvs_key = '{}_{}x{}'.format('dvs_accum', new_size[0], new_size[1])
         print('Resizing DVS frames to {}...'.format(new_dvs_key))
         sys.stdout.flush()
         start_time = time.time()
-        resize_data_into_new_key(dataset_dvs, 'dvs_frame', new_dvs_key, new_size, seperate_dvs_channels=args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
+        resize_data_into_new_key(dataset_dvs_accum, 'dvs_accum', new_dvs_key, new_size)
+        print('Finished in {}s.'.format(time.time()-start_time))
+
+        if not args.skip_mean_std:
+            print('Calculating DVS frame mean...')
+            sys.stdout.flush()
+            start_time = time.time()
+            calc_data_mean(dataset, new_dvs_key, force=args.rewrite)
+            print('Finished in {}s.'.format(time.time()-start_time))
+            sys.stdout.flush()
+
+            print('Calculating DVS frame std...')
+            sys.stdout.flush()
+            start_time = time.time()
+            calc_data_std(dataset, new_dvs_key, force=args.rewrite)
+            print('Finished in {}s.'.format(time.time()-start_time))
+
+    if np.any(dataset_dvs_split['dvs_split'][0]):
+        new_dvs_key = '{}_{}x{}'.format('dvs_split', new_size[0], new_size[1])
+        print('Resizing DVS frames to {}...'.format(new_dvs_key))
+        sys.stdout.flush()
+        start_time = time.time()
+        resize_data_into_new_key(dataset_dvs_split, 'dvs_split', new_dvs_key, new_size, seperate_dvs_channels=args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
         print('Finished in {}s.'.format(time.time()-start_time))
 
         if not args.skip_mean_std:
@@ -77,5 +101,7 @@ if __name__ == '__main__':
     print('Done.  Preprocessing complete.')
     filesize = os.path.getsize(args.filename_aps)
     print('Final size (APS): {:.1f}MiB to {}.'.format(filesize/1024**2, args.filename_aps))
-    filesize = os.path.getsize(args.filename_dvs)
-    print('Final size (DVS): {:.1f}MiB to {}.'.format(filesize/1024**2, args.filename_dvs))
+    filesize = os.path.getsize(args.filename_dvs_accum)
+    print('Final size (DVS Accum): {:.1f}MiB to {}.'.format(filesize/1024**2, args.filename_dvs_accum))
+    filesize = os.path.getsize(args.filename_dvs_split)
+    print('Final size (DVS Split): {:.1f}MiB to {}.'.format(filesize/1024**2, args.filename_dvs_split))

@@ -94,15 +94,16 @@ def calc_data_std(h5f, group_key, chunksize=1024*10, axes=(0), force=False):
     h5f.create_dataset(group_key+'_std', data=np.array(std_val))
     return
 
-def build_simul_train_test_split(h5f_aps, h5f_dvs, train_div=5*60, test_div=1*60, force=False):
-    ep = get_common_endpoint(h5f_aps, h5f_dvs)
+def build_simul_train_test_split(h5f_aps, h5f_dvs_accum, h5f_dvs_split, train_div=5*60, test_div=1*60, force=False):
+    ep = get_common_endpoint(h5f_aps, h5f_dvs_accum)
     train_idxs, test_idxs = [], []
-    curr_idx, curr_ts = 0, h5f_aps['timestamp'][0]
-    print(curr_ts)
-    curr_idx, curr_ts = 0, h5f_dvs['timestamp'][0]
-    print(curr_ts)
+    curr_idx = 0
+    curr_ts_aps = h5f_aps['timestamp'][0]
+    curr_ts_dvs_accum = h5f_dvs_accum['timestamp'][0]
+    curr_ts_dvs_split = h5f_dvs_split['timestamp'][0]
+    curr_ts = max(curr_ts_aps, curr_ts_dvs_accum, curr_ts_dvs_split)
 
-    while curr_idx < len(h5f_aps['timestamp'][:ep]) and curr_idx < len(h5f_dvs['timestamp'][:ep]):
+    while curr_idx < len(h5f_aps['timestamp'][:ep]) and curr_idx < len(h5f_dvs_accum['timestamp'][:ep]) and curr_idx < len(h5f_dvs_split['timestamp'][:ep]):
         # Get train indexes
         stop_idx = np.where(h5f_aps['timestamp'][curr_idx:ep] > curr_ts+train_div)[0]
         stop_idx = stop_idx[0] if np.any(stop_idx) else ep-curr_idx
@@ -116,16 +117,20 @@ def build_simul_train_test_split(h5f_aps, h5f_dvs, train_div=5*60, test_div=1*60
         curr_ts = curr_ts+test_div
         curr_idx = curr_idx+stop_idx
     # Replace as necessary
-    if force and (('train_idxs' in h5f_aps) or ('train_idxs' in h5f_dvs)):
+    if force and (('train_idxs' in h5f_aps) or ('train_idxs' in h5f_dvs_accum) or ('train_idxs' in h5f_dvs_split)):
         del h5f_aps['train_idxs']
-        del h5f_dvs['train_idxs']
+        del h5f_dvs_accum['train_idxs']
+        del h5f_dvs_split['train_idxs']
     h5f_aps.create_dataset('train_idxs', data=np.array(train_idxs))
-    h5f_dvs.create_dataset('train_idxs', data=np.array(train_idxs))
-    if force and (('test_idxs' in h5f_aps) or ('test_idxs' in h5f_dvs)):
+    h5f_dvs_accum.create_dataset('train_idxs', data=np.array(train_idxs))
+    h5f_dvs_split.create_dataset('train_idxs', data=np.array(train_idxs))
+    if force and (('test_idxs' in h5f_aps) or ('test_idxs' in h5f_dvs_accum) or ('test_idxs' in h5f_dvs_split)):
         del h5f_aps['test_idxs']
-        del h5f_dvs['test_idxs']
+        del h5f_dvs_accum['test_idxs']
+        del h5f_dvs_split['test_idxs']
     h5f_aps.create_dataset('test_idxs', data=np.array(test_idxs))
-    h5f_dvs.create_dataset('test_idxs', data=np.array(test_idxs))
+    h5f_dvs_accum.create_dataset('test_idxs', data=np.array(test_idxs))
+    h5f_dvs_split.create_dataset('test_idxs', data=np.array(test_idxs))
     return
 
 def build_train_test_split(h5f, train_div=5*60, test_div=1*60, force=False):
@@ -401,7 +406,7 @@ def resize_data_into_new_key(h5f, key, new_key, new_size, chunk_size=1024, seper
 
     if key == 'aps_frame':
         do_resize = resize_int8
-    elif key == 'dvs_frame':
+    elif key == 'dvs_accum' or key == 'dvs_split' or key == 'dvs_channels':
         do_resize = resize_int16
     else:
         raise AssertionError('Unknown data type')
