@@ -2,3 +2,11 @@
 .ipynb_checkpoints
 *.ipynb
 *.swp
+saved_models*
+data_preprocessing*
+processed_dataset*
+*log*
+*data*
+results*
+*dataset*
+rog_script*
