@@ -22,7 +22,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr',       default=0.1, type=float, help='Learning Rate')
     # Control meta parameters
     parser.add_argument('--seed',         default=42, type=int, help='Initialize the random seed of the run (for reproducibility).')
-    parser.add_argument('--batch_size',   default=32, type=int, help='Batch size.')
+    parser.add_argument('--batch_size',   default=16, type=int, help='Batch size.')
     parser.add_argument('--num_epochs',   default=30, type=int, help='Number of epochs to train for.')
     parser.add_argument('--patience',     default=4, type=int, help='How long to wait for an increase in validation error before quitting.')
     parser.add_argument('--patience_key', default='test_acc', help='What key to look at before quitting.')
@@ -62,11 +62,25 @@ if __name__ == '__main__':
 
     # Load dataset
     if args.encoder_decoder:
-        h5fs_aps = [h5py.File(h5file, 'r') for h5file in args.h5files_aps]
-        h5fs_dvs = [h5py.File(h5file, 'r') for h5file in args.h5files_dvs]
+        h5fs_aps_ = [h5py.File(h5file, 'r') for h5file in args.h5files_aps]
+        h5fs_dvs_ = [h5py.File(h5file, 'r') for h5file in args.h5files_dvs]
+        h5fs_aps = []
+        h5fs_dvs = []
+        # Filter out corrupted data
+        for h5_a, h5_d in zip(h5fs_aps_, h5fs_dvs_):
+            if ("aps_frame_80x80" in h5_a.keys()) and ("dvs_split_80x80" in h5_d.keys()):
+                h5fs_aps.append(h5_a)
+                h5fs_dvs.append(h5_d)
     else:
-        h5fs = [h5py.File(h5file, 'r') for h5file in args.h5files]
-
+        h5fs = []
+        dataset_keys = []
+        h5fs_ = [h5py.File(h5file, 'r') for h5file in args.h5files]
+        # Filter out corrupted data
+        for i in range(len(h5fs_)):
+            if args.dataset_keys[i] in h5fs_[i].keys():
+                h5fs.append(h5fs_[i])
+                dataset_keys.append(args.dataset_keys[i])
+        args.dataset_keys = dataset_keys
 
     if args.seperate_dvs_channels and args.use_encoder == False:
         num_channels = 2
@@ -105,7 +119,7 @@ if __name__ == '__main__':
                           'dataset': 'ddd20'}
             network = Nets_Spiking.VGG_SNN_STDB(**model_args)
     else:
-        network = Nets.VGG9(num_channels = num_channels)
+        network = Nets.VGG16(num_channels = num_channels)
         #network = Nets.ResNet34(num_channels = num_channels)
         if args.use_encoder:
             model_args = {'timesteps': args.timesteps,
@@ -119,6 +133,7 @@ if __name__ == '__main__':
             encoder_network.eval()
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    network = torch.nn.DataParallel(network, device_ids=[0, 1, 2, 3])
     network.to(device)
     if encoder_network:
         encoder_network.to(device)
@@ -130,8 +145,8 @@ if __name__ == '__main__':
         num_train_batches_dvs = int(np.ceil(float(np.sum([len(h5f['train_idxs']) for h5f in h5fs_dvs]))/args.batch_size))
         num_test_batches_dvs = int(np.ceil(float(np.sum([len(h5f['test_idxs']) for h5f in h5fs_dvs]))/args.batch_size))
         print(num_train_batches_aps,num_train_batches_dvs)
-        assert (num_train_batches_aps == num_train_batches_dvs)
-        assert (num_test_batches_aps == num_test_batches_dvs)
+        # assert (num_train_batches_aps == num_train_batches_dvs)
+        # assert (num_test_batches_aps == num_test_batches_dvs)
         num_train_batches = num_train_batches_aps
         num_test_batches = num_test_batches_aps
     else:
@@ -157,7 +172,6 @@ if __name__ == '__main__':
                 vid_in = torch.from_numpy(vid_in_).to(device)
             break
         print("Input Shape: {} -> {}, Output Shape: {}".format(vid_in_.shape, vid_in.shape, bY.shape))
-    # print(vid_in, bY)
 
     def adjust_learning_rate(optimizer, cur_epoch):
         # Reduce learning rate by 10 twice at epoch 30 and 60
@@ -168,7 +182,7 @@ if __name__ == '__main__':
     loss_fn = torch.nn.MSELoss()
 
     if args.optimizer == "Adam":
-        optimizer = torch.optim.Adam(network.parameters(), lr=args.lr)
+        optimizer = torch.optim.Adam(network.parameters(), lr=args.lr, weight_decay=1e-4)
     elif args.optimizer == "SGD":
        optimizer = torch.optim.SGD(network.parameters(), lr=args.lr,momentum=0.9,weight_decay=1e-4)
 
@@ -177,6 +191,8 @@ if __name__ == '__main__':
         if args.encoder_decoder:
             for data in temp.flow(h5fs_aps, h5fs_dvs, args.dataset_keys_aps, args.dataset_keys_dvs, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
                 vid_aps, vid_dvs = data
+                if vid_dvs.shape[0] != args.batch_size or vid_aps.shape[0] != args.batch_size:
+                    continue
                 vid_aps_pred = network(torch.from_numpy(vid_dvs).to(device))
                 loss = loss_fn(vid_aps_pred, torch.from_numpy(vid_aps).to(device))
                 train_loss += loss.item()/args.batch_size
@@ -192,11 +208,10 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
+                if bY.shape[0] != args.batch_size:
+                    continue
                 y_pred = network(vid_in)
-                # print("y", bY)
-                # print("y_pred", y_pred)
                 loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-                # print(t, loss.item())
                 train_loss += loss.item()/args.batch_size
                 optimizer.zero_grad()
                 loss.backward()
@@ -207,6 +222,8 @@ if __name__ == '__main__':
         if args.encoder_decoder:
             for data in temp.flow(h5fs_aps, h5fs_dvs, args.dataset_keys_aps, args.dataset_keys_dvs, 'test_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
                 vid_aps, vid_dvs = data
+                if vid_dvs.shape[0] != args.batch_size or vid_aps.shape[0] != args.batch_size:
+                    continue
                 vid_aps_pred = network(torch.from_numpy(vid_dvs).to(device))
                 loss = loss_fn(vid_aps_pred, torch.from_numpy(vid_aps).to(device))
                 test_loss += loss.item()/args.batch_size
@@ -219,9 +236,10 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
+                if bY.shape[0] != args.batch_size:
+                    continue
                 y_pred = network(vid_in)
                 loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-                # print(t, loss.item())
                 test_loss += loss.item()/args.batch_size
             test_loss = np.sqrt(test_loss/num_test_batches)
             print("Epoch: {}, Test Avg RMSE: {}".format(t, test_loss))
