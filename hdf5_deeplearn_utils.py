@@ -266,13 +266,11 @@ class MultiHDF5EncoderDecoderVisualIterator(object):
                 all_data_idxs_dvs.append((h5f, idx))
         num_examples_aps = len(all_data_idxs_aps)
         num_examples_dvs = len(all_data_idxs_dvs)
-        num_batches_aps = int(np.ceil(float(num_examples_aps)/batch_size))
-        num_batches_dvs = int(np.ceil(float(num_examples_dvs)/batch_size))
-        assert num_batches_aps == num_batches_dvs
-        num_batches = num_batches_aps
+        num_examples = min(num_examples_aps, num_examples_dvs)
+        num_batches = int(np.ceil(float(num_examples)/batch_size))
         # Shuffle the data
         if shuffle:
-            all_data_idxs_aps, all_data_idxs_dvs = sklearn.utils.shuffle(all_data_idxs_aps, all_data_idxs_dvs)
+            all_data_idxs_aps, all_data_idxs_dvs = sklearn.utils.shuffle(all_data_idxs_aps[:num_examples], all_data_idxs_dvs[:num_examples])
             # np.random.shuffle(all_data_idxs)
         b = 0
         while b < num_batches:
