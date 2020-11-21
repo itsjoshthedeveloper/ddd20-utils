@@ -10,12 +10,32 @@ import torchvision.transforms as transforms
 import Nets
 import Nets_Spiking
 import Nets_Spiking_BNTT
+import shutil
+
+def save_ckp(state, checkpoint_dir, comb_filename):
+    f_path = os.path.join(checkpoint_dir, comb_filename + '_checkpoint.pt')
+    torch.save(state, f_path)
+
+def load_ckp(checkpoint_dir, comb_filename, model, optimizer):
+    checkpoint_fpath = os.path.join(checkpoint_dir,  comb_filename + '_checkpoint.pt')
+    checkpoint = torch.load(checkpoint_fpath)
+    model.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    return model, optimizer, checkpoint['epoch']
+
+def evaluate_checkpoint(checkpoint_dir, comb_filename):
+    checkpoint_fpath = os.path.join(checkpoint_dir,  comb_filename + '_checkpoint.pt')
+    checkpoint = torch.load(checkpoint_fpath)
+    print("Epochs:", checkpoint["epoch"])
+    print("Train Error:", checkpoint["train_error"])
+    print("Test Error:", checkpoint["test_error"])    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a driving network.')
     # File and path naming stuff
     parser.add_argument('--h5files',    nargs='+', default='/home/dneil/h5fs/driving/rec1487864316_bin5k.hdf5', help='HDF5 File that has the data.')
     parser.add_argument('--run_id',       default='default', help='ID of the run, used in saving.')
+    parser.add_argument('--checkpoint_dir',       default=None, help='Checkpoint file if we are resuming the training')
     parser.add_argument('--filename',     default='driving_cnn_19.4_multi', help='Filename to save model and log to.')
     parser.add_argument('--result_dir',     default='saved_models', help='Folder to save the model')
     parser.add_argument('--optimizer',       default='Adam', help='Optimizer to use. Adam or  SGD')
@@ -28,6 +48,8 @@ if __name__ == '__main__':
     parser.add_argument('--patience_key', default='test_acc', help='What key to look at before quitting.')
     parser.add_argument('--wait_period',  default=10, type=int, help='How long to wait before looking for early stopping.')
     parser.add_argument('--dataset_keys',  nargs='+', default='aps_frame_48x64', help='Which dataset key (APS, DVS, etc.) to use.')
+    parser.add_argument('--evaluate', action='store_true', help='Boolean variable to evaluate saved model.')
+    parser.add_argument('--evaluate_ckp', action='store_true', help='Boolean variable to evaluate checkpoint.')
     # --- DVS Dataset related args --- #
     parser.add_argument('--dvs', action='store_true', help='Boolean value if we are using DVS data')
     parser.add_argument('--seperate_dvs_channels', action='store_true', help='DVS frames with seperated polarity channesl')
@@ -44,6 +66,7 @@ if __name__ == '__main__':
     parser.add_argument('--default_threshold', default=1.0, type=float, help='intial threshold to train SNN from scratch')
     parser.add_argument('--dropout', default=0.3, type=float, help='dropout percentage for conv layers')
     parser.add_argument('--BNTT', action='store_true', help='Flag to run an BNTT')
+    parser.add_argument('--hybrid', action='store_true', help='Boolean variable to use hybrid SNN + ANN model.')
     # --- Encoder Decoder Architecture args --- #
     parser.add_argument('--encoder_decoder', action='store_true', help='Flag to run an encoder decoder architecture')
     parser.add_argument('--h5files_aps',    nargs='+', help='HDF5 File that has APS data.')
@@ -91,20 +114,29 @@ if __name__ == '__main__':
     encoder_network = None
     if args.snn:
         if args.BNTT:
-            if args.dvs:
+            if args.dvs and args.encoder_decoder:
                 model_args = {'timesteps': args.timesteps,
                               'img_size': 80,
                               'inp_maps': 2,
                               'num_cls': 1,
                               'inp_type': 'dvs',
                               'encoder_decoder': args.encoder_decoder}
+            elif args.dvs:
+                model_args = {'timesteps': args.timesteps,
+                              'img_size': 80,
+                              'inp_maps': 2,
+                              'num_cls': 1,
+                              'inp_type': 'dvs'}
             else:
                 model_args = {'timesteps': args.timesteps,
                               'img_size': 80,
                               'inp_maps': 1,
                               'num_cls': 1,
                               'inp_type': 'aps'}
-            network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
+            if args.hybrid:
+                network = Nets_Spiking_BNTT.HYBRID16_TBN(**model_args)
+            else:
+                network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
         else:
             model_args = {'vgg_name': 'VGG16',
                           'activation': args.activation,
@@ -133,7 +165,7 @@ if __name__ == '__main__':
             encoder_network.eval()
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    network = torch.nn.DataParallel(network, device_ids=[0, 1, 2, 3])
+    # network = torch.nn.DataParallel(network, device_ids=[0, 1, 2, 3])
     network.to(device)
     if encoder_network:
         encoder_network.to(device)
@@ -152,16 +184,16 @@ if __name__ == '__main__':
     else:
         num_train_batches = int(np.ceil(float(np.sum([len(h5f['train_idxs']) for h5f in h5fs]))/args.batch_size))
         num_test_batches = int(np.ceil(float(np.sum([len(h5f['test_idxs']) for h5f in h5fs]))/args.batch_size))
-    print(num_train_batches, num_test_batches)
+    # print(num_train_batches, num_test_batches)
 
     # Dump some debug data if we like
-    print(network)
+    # print(network)
     if args.encoder_decoder:
         temp = MultiHDF5EncoderDecoderVisualIterator()
         for data in temp.flow(h5fs_aps, h5fs_dvs, args.dataset_keys_aps, args.dataset_keys_dvs, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
             vid_aps, vid_dvs = data
             break
-        print("Input Shape: {}, Output Shape: {}".format(vid_dvs.shape, vid_aps.shape))
+        # print("Input Shape: {}, Output Shape: {}".format(vid_dvs.shape, vid_aps.shape))
     else:
         temp = MultiHDF5VisualIterator()
         for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
@@ -171,13 +203,13 @@ if __name__ == '__main__':
             else:
                 vid_in = torch.from_numpy(vid_in_).to(device)
             break
-        print("Input Shape: {} -> {}, Output Shape: {}".format(vid_in_.shape, vid_in.shape, bY.shape))
+        # print("Input Shape: {} -> {}, Output Shape: {}".format(vid_in_.shape, vid_in.shape, bY.shape))
 
     def adjust_learning_rate(optimizer, cur_epoch):
         # Reduce learning rate by 10 twice at epoch 30 and 60
-        if cur_epoch == int(0.5*args.num_epochs) or cur_epoch == int(args.num_epochs*0.7) or cur_epoch== int(args.num_epochs*0.9):
+        if cur_epoch == int(0.5*args.num_epochs) or cur_epoch == int(0.6*args.num_epochs) or cur_epoch == int(args.num_epochs*0.7) or cur_epoch == int(args.num_epochs*0.8) or cur_epoch== int(args.num_epochs*0.9):
             for param_group in optimizer.param_groups:
-                 param_group['lr'] /= 10
+                 param_group['lr'] /= 5
 
     loss_fn = torch.nn.MSELoss()
 
@@ -185,8 +217,59 @@ if __name__ == '__main__':
         optimizer = torch.optim.Adam(network.parameters(), lr=args.lr, weight_decay=1e-4)
     elif args.optimizer == "SGD":
        optimizer = torch.optim.SGD(network.parameters(), lr=args.lr,momentum=0.9,weight_decay=1e-4)
+    
+    if args.evaluate_ckp:
+        evaluate_checkpoint(args.checkpoint_dir, comb_filename)
+        sys.exit()
 
-    for t in range(args.num_epochs):
+    if args.evaluate:
+        # print("Evaluating {} on ({}, {})".format(args.run_id, h5fs, args.dataset_keys))
+        network.load_state_dict(torch.load(os.path.join(args.result_dir, comb_filename)))
+        network.eval()
+        num_test_batches = 0
+        test_loss = 0
+        for data in temp.flow(h5fs, args.dataset_keys, 'test_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
+            vid_in_, bY = data
+            if args.use_encoder:
+                vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
+            else:
+                vid_in = torch.from_numpy(vid_in_).to(device)
+            if bY.shape[0] != args.batch_size:
+                continue
+            y_pred = network(vid_in)
+            loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
+            test_loss += loss.item()/args.batch_size
+            num_test_batches += 1
+        test_loss = np.sqrt(test_loss/num_test_batches)
+        print("Test Avg RMSE: {}".format(test_loss))
+        """
+        num_test_batches = 0
+        test_loss = 0
+        for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
+            vid_in_, bY = data
+            if args.use_encoder:
+                vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
+            else:
+                vid_in = torch.from_numpy(vid_in_).to(device)
+            if bY.shape[0] != args.batch_size:
+                continue
+            y_pred = network(vid_in)
+            loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
+            test_loss += loss.item()/args.batch_size
+            num_test_batches += 1
+        test_loss = np.sqrt(test_loss/num_test_batches)
+        print("Train Avg RMSE: {}".format(test_loss))
+        """
+        sys.exit()
+
+    try:
+        network, optimizer, start_epoch = load_ckp(args.checkpoint_dir, comb_filename, network, optimizer)
+        print("Found checkpoint. Resuming training ...")
+    except:
+        start_epoch = 0
+        print("Checkpoint not found. Training from scratch ...")
+
+    for t in range(start_epoch, args.num_epochs):
         train_loss = 0
         if args.encoder_decoder:
             for data in temp.flow(h5fs_aps, h5fs_dvs, args.dataset_keys_aps, args.dataset_keys_dvs, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
@@ -244,5 +327,13 @@ if __name__ == '__main__':
             test_loss = np.sqrt(test_loss/num_test_batches)
             print("Epoch: {}, Test Avg RMSE: {}".format(t, test_loss))
         torch.save(network.state_dict(), os.path.join(args.result_dir, comb_filename))
+        checkpoint = {
+            'epoch': t + 1,
+            'state_dict': network.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'train_error': train_loss,
+            'test_error': test_loss
+        }
+        save_ckp(checkpoint, args.result_dir, comb_filename)
         adjust_learning_rate(optimizer, t)
 
