@@ -26,6 +26,7 @@ def load_ckp(checkpoint_dir, comb_filename, model, optimizer):
 def evaluate_checkpoint(checkpoint_dir, comb_filename):
     checkpoint_fpath = os.path.join(checkpoint_dir,  comb_filename + '_checkpoint.pt')
     checkpoint = torch.load(checkpoint_fpath)
+    print("Checkpoint Found:", checkpoint_fpath)
     print("Epochs:", checkpoint["epoch"])
     print("Train Error:", checkpoint["train_error"])
     print("Test Error:", checkpoint["test_error"])    
@@ -40,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--result_dir',     default='saved_models', help='Folder to save the model')
     parser.add_argument('--optimizer',       default='Adam', help='Optimizer to use. Adam or  SGD')
     parser.add_argument('--lr',       default=0.1, type=float, help='Learning Rate')
+    parser.add_argument('--img_size',         default=80, type=int, help='Dimension of image. Assumed to be square')
     # Control meta parameters
     parser.add_argument('--seed',         default=42, type=int, help='Initialize the random seed of the run (for reproducibility).')
     parser.add_argument('--batch_size',   default=16, type=int, help='Batch size.')
@@ -83,6 +85,10 @@ if __name__ == '__main__':
     # Set the save name
     comb_filename = '_'.join([args.filename, args.run_id, args.optimizer, str(args.lr)])
 
+    if args.evaluate_ckp:
+        evaluate_checkpoint(args.checkpoint_dir, comb_filename)
+        sys.exit()
+        
     # Load dataset
     if args.encoder_decoder:
         h5fs_aps_ = [h5py.File(h5file, 'r') for h5file in args.h5files_aps]
@@ -116,20 +122,20 @@ if __name__ == '__main__':
         if args.BNTT:
             if args.dvs and args.encoder_decoder:
                 model_args = {'timesteps': args.timesteps,
-                              'img_size': 80,
+                              'img_size': args.img_size,
                               'inp_maps': 2,
                               'num_cls': 1,
                               'inp_type': 'dvs',
                               'encoder_decoder': args.encoder_decoder}
             elif args.dvs:
                 model_args = {'timesteps': args.timesteps,
-                              'img_size': 80,
+                              'img_size': args.img_size,
                               'inp_maps': 2,
                               'num_cls': 1,
                               'inp_type': 'dvs'}
             else:
                 model_args = {'timesteps': args.timesteps,
-                              'img_size': 80,
+                              'img_size': args.img_size,
                               'inp_maps': 1,
                               'num_cls': 1,
                               'inp_type': 'aps'}
@@ -151,11 +157,12 @@ if __name__ == '__main__':
                           'dataset': 'ddd20'}
             network = Nets_Spiking.VGG_SNN_STDB(**model_args)
     else:
-        network = Nets.VGG16(num_channels = num_channels)
+        #network = Nets.VGG16(num_channels = num_channels)
         #network = Nets.ResNet34(num_channels = num_channels)
+        network = Nets.HYBRID_BASELINE(num_channels = num_channels, img_size=args.img_size)
         if args.use_encoder:
             model_args = {'timesteps': args.timesteps,
-                          'img_size': 80,
+                          'img_size': args.img_size,
                           'inp_maps': 2,
                           'num_cls': 1,
                           'inp_type': 'dvs',
@@ -217,10 +224,6 @@ if __name__ == '__main__':
         optimizer = torch.optim.Adam(network.parameters(), lr=args.lr, weight_decay=1e-4)
     elif args.optimizer == "SGD":
        optimizer = torch.optim.SGD(network.parameters(), lr=args.lr,momentum=0.9,weight_decay=1e-4)
-    
-    if args.evaluate_ckp:
-        evaluate_checkpoint(args.checkpoint_dir, comb_filename)
-        sys.exit()
 
     if args.evaluate:
         # print("Evaluating {} on ({}, {})".format(args.run_id, h5fs, args.dataset_keys))
@@ -291,6 +294,8 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
+                    if args.snn:
+                        vid_in = vid_in_
                 if bY.shape[0] != args.batch_size:
                     continue
                 y_pred = network(vid_in)
@@ -319,6 +324,8 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
+                    if args.snn:
+                        vid_in = vid_in_
                 if bY.shape[0] != args.batch_size:
                     continue
                 y_pred = network(vid_in)
