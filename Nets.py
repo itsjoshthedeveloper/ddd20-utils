@@ -6,6 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torchvision.models as models
+import torchvision.transforms as transforms
 
 class MLP(nn.Module):
     def __init__(self, dim_in, dim_hidden, dim_out):
@@ -49,19 +50,22 @@ cfg = {
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'HYBRID_BASELINE': [64, 64, 'A', 128, 'A',256, 256, 'M', 512, 'M', 512, 'M'],
 }
 
 
 class VGG(nn.Module):
-    def __init__(self, model, num_channels = 1):
+    def __init__(self, model, num_channels = 1, img_size = 80):
         super(VGG, self).__init__()
+        self.resize_fn = transforms.Resize(img_size)
         self.features = self._make_layers(cfg[model], in_channels = num_channels)
         if model == 'VGG9':
             self.classifier = nn.Linear(12800, 1)
         else:
-            self.classifier = nn.Linear(2048, 1)
+            self.classifier = nn.Linear(2048//((80*80)//(img_size*img_size)), 1)
 
     def forward(self, x):
+        x = self.resize_fn(x)
         out = self.features(x)
         out = out.view(out.size(0), -1)
         out = self.classifier(out)
@@ -72,6 +76,8 @@ class VGG(nn.Module):
         for x in cfg:
             if x == 'M':
                 layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            elif x == 'A':
+                layers += [nn.AvgPool2d(kernel_size=2, stride=2)]
             else:
                 layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                            nn.BatchNorm2d(x),
@@ -94,6 +100,9 @@ def VGG11(num_channels = 1):
 
 def VGG9(num_channels = 1):
     return VGG("VGG9", num_channels = num_channels)
+
+def HYBRID_BASELINE(num_channels = 1, img_size = 80):
+    return VGG("HYBRID_BASELINE", num_channels = num_channels, img_size = img_size)
 
 class BasicBlock(nn.Module):
     expansion = 1
