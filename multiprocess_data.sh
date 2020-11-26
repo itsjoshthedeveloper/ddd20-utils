@@ -2,9 +2,11 @@
 set -e
 # Set these for you:
 OUT_DIR=frozen_dataset/day
-RESULT_DIR=saved_models_hybrid/day
+# RESULT_DIR=saved_models_test/day/
+RESULT_DIR=saved_models_hybrid_run2/day/
+# RESULT_DIR=saved_models_ann_baseline/day/
 ORIGIN_DIR=data/fordfocus/
-# TODO_FILES=( jul28/rec1501288723.hdf5 ) # Tiny data - one clip from night one from day
+# TODO_FILES=( jul17/rec1500329649.hdf5 ) # Tiny data - one clip from night one from day
 # TODO_FILES=( jul09/rec1499656391.hdf5 jul09/rec1499657850.hdf5 aug01/rec1501649676.hdf5 aug01/rec1501650719.hdf5 aug05/rec1501994881.hdf5 aug09/rec1502336427.hdf5 aug09/rec1502337436.hdf5 jul01/rec1498946027.hdf5 aug01/rec1501651162.hdf5 jul02/rec1499025222.hdf5 aug09/rec1502338023.hdf5 aug09/rec1502338983.hdf5 aug09/rec1502339743.hdf5 jul01/rec1498949617.hdf5 aug12/rec1502599151.hdf5 ) # Night data
 TODO_FILES=( jul16/rec1500220388.hdf5 jul18/rec1500383971.hdf5 jul18/rec1500402142.hdf5 jul28/rec1501288723.hdf5 jul29/rec1501349894.hdf5 aug01/rec1501614399.hdf5 aug08/rec1502241196.hdf5 aug15/rec1502825681.hdf5 jul02/rec1499023756.hdf5 jul05/rec1499275182.hdf5 jul08/rec1499533882.hdf5 jul16/rec1500215505.hdf5 jul17/rec1500314184.hdf5 jul17/rec1500329649.hdf5 aug05/rec1501953155.hdf5 ) # Day data
 # TODO_FILES=( jul09/rec1499656391.hdf5 jul09/rec1499657850.hdf5 aug01/rec1501649676.hdf5 aug01/rec1501650719.hdf5 aug05/rec1501994881.hdf5 aug09/rec1502336427.hdf5 aug09/rec1502337436.hdf5 jul01/rec1498946027.hdf5 aug01/rec1501651162.hdf5 jul02/rec1499025222.hdf5 aug09/rec1502338023.hdf5 aug09/rec1502338983.hdf5 aug09/rec1502339743.hdf5 jul01/rec1498949617.hdf5 aug12/rec1502599151.hdf5 jul16/rec1500220388.hdf5 jul18/rec1500383971.hdf5 jul18/rec1500402142.hdf5 jul28/rec1501288723.hdf5 jul29/rec1501349894.hdf5 aug01/rec1501614399.hdf5 aug08/rec1502241196.hdf5 aug15/rec1502825681.hdf5 jul02/rec1499023756.hdf5 jul05/rec1499275182.hdf5 jul08/rec1499533882.hdf5 jul16/rec1500215505.hdf5 jul17/rec1500314184.hdf5 jul17/rec1500329649.hdf5 aug05/rec1501953155.hdf5 ) # Day + Night data
@@ -201,10 +203,73 @@ ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[
 
 # ---- Hybrid Nets ---- #
 # ------------------ Hybrid on rate coded APS --------------- #
-ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid --snn --BNTT --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.1 --num_epochs 20 --batch_size 16
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid --snn --BNTT --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid --snn --BNTT --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 30 --batch_size 16 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
 
 # ------------------ Hybrid on split DVS --------------- #
-# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.1 --num_epochs 20 --batch_size 32
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
 
 # ------------------ Hybrid on rate coded DVS --------------- #
-# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded --timesteps 20 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.1 --num_epochs 20 --batch_size 32
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded --timesteps 20 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded --timesteps 20 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+### ANN Baselines ###
+# ------------------ ANN on APS -------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id ann_baseline_aps --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id ann_baseline_aps --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ ANN on accumulated DVS -----------#
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id ann_baseline_dvs --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --checkpoint_dir ${RESULT_DIR} 
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id ann_baseline_dvs --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --checkpoint_dir ${RESULT_DIR} --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+### 40x40 Experiments ###
+
+# ---- Hybrid Nets ---- #
+# ------------------ Hybrid on rate coded APS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_40x40 --snn --BNTT --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR} --img_size 40
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_40x40 --snn --BNTT --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --evaluate_ckp --checkpoint_dir ${RESULT_DIR} --img_size 40
+
+# ------------------ Hybrid on split DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_40x40 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR} --img_size 40
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_40x40 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 20 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 40 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR} --img_size 40
+
+# ------------------ Hybrid on rate coded DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_40x40 --timesteps 20 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR} --img_size 40
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_40x40 --timesteps 20 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR} --img_size 40
+
+# ------------------ ANN on APS -------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id ann_baseline_aps_40x40 --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --img_size 40
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id ann_baseline_aps_40x40 --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --img_size 40 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ ANN on accumulated DVS -----------#
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id ann_baseline_dvs_40x40 --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --checkpoint_dir ${RESULT_DIR} --img_size 40
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id ann_baseline_dvs_40x40 --optimizer "Adam" --lr 0.001 --batch_size 64 --num_epochs 200 --result_dir ${RESULT_DIR} --checkpoint_dir ${RESULT_DIR} --img_size 40 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+### 25 timesteps ###
+# ---- Hybrid Nets ---- #
+# ------------------ Hybrid on rate coded APS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_ts25 --snn --BNTT --timesteps 25 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_ts25 --snn --BNTT --timesteps 25 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 30 --batch_size 16 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ Hybrid on split DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_ts25 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 25 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_ts25 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 25 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 40 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ Hybrid on rate coded DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_ts25 --timesteps 25 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_ts25 --timesteps 25 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+### 5 timesteps ###
+# ---- Hybrid Nets ---- #
+# ------------------ Hybrid on rate coded APS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_ts5 --snn --BNTT --timesteps 5 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${frames_h5list[@]} --dataset_keys ${frames_type_list[@]} --run_id aps_hybrid_ts5 --snn --BNTT --timesteps 5 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 30 --batch_size 16 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ Hybrid on split DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_ts5 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 5 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs100ms_h5list[@]} --dataset_keys ${dvs100ms_type_list[@]} --run_id dvs_hybrid_timesteps_ts5 --dvs --snn --BNTT --split_timesteps --seperate_dvs_channels --timesteps 5 --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 40 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
+
+# ------------------ Hybrid on rate coded DVS --------------- #
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_ts5 --timesteps 5 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 32 --checkpoint_dir ${RESULT_DIR}
+# ipython ./multitrain_test_cnn_pytorch.py -- --h5files ${dvs_accum_frames_h5list[@]} --dataset_keys ${dvs_accum_frames_type_list[@]} --run_id dvs_hybrid_first_conv_coded_ts5 --timesteps 5 --snn --BNTT --optimizer "Adam" --result_dir ${RESULT_DIR} --hybrid --lr 0.05 --num_epochs 200 --batch_size 10 --evaluate_ckp --checkpoint_dir ${RESULT_DIR}
