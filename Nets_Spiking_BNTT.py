@@ -342,7 +342,6 @@ class HYBRID16_TBN(nn.Module):
     def forward(self, inp):
         # avg_spike_time = []
         # Initialize the neuronal membrane potentials and dropout masks
-        np_inp = inp
         batch_size = inp.shape[0]
         mem_conv1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
         mem_conv1_1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
@@ -356,10 +355,8 @@ class HYBRID16_TBN(nn.Module):
         for t in range(self.num_steps):
             if self.inp_type == 'dvs':
                 spike_inp = SliceTimestep(inp, t, timesteps = self.num_steps)
-                spike_inp = torch.from_numpy(spike_inp).cuda()
                 spike_inp = self.resize_fn(spike_inp)
             else:
-                inp = torch.from_numpy(np_inp).cuda()
                 inp = self.resize_fn(inp)
                 spike_inp = inp
                 # spike_inp = PoissonGen(inp)

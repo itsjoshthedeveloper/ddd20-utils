@@ -294,8 +294,6 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
-                    if args.snn:
-                        vid_in = vid_in_
                 if bY.shape[0] != args.batch_size:
                     continue
                 y_pred = network(vid_in)
@@ -324,8 +322,6 @@ if __name__ == '__main__':
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
                     vid_in = torch.from_numpy(vid_in_).to(device)
-                    if args.snn:
-                        vid_in = vid_in_
                 if bY.shape[0] != args.batch_size:
                     continue
                 y_pred = network(vid_in)
