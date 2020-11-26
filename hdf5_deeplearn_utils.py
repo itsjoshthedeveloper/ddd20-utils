@@ -346,11 +346,11 @@ def resize_int16(frame, size=(60,80), method='bilinear', climit=[-15,15], sepera
     #return imresize((np.clip(frame, climit[0], climit[1]).astype('float32')+127), size, interp=method).astype('uint8')
 
     if split_timesteps:
-        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (timesteps, 2, size[0], size[1]))))
+        out_frame = img_as_ubyte(resize(np.clip(frame, climit[0], climit[1]), (timesteps, 2, size[0], size[1])))
     elif seperate_dvs_channels:
-        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (2, size[0], size[1]))))
+        out_frame = img_as_ubyte(resize(np.clip(frame, climit[0], climit[1]), (2, size[0], size[1])))
     else:
-        out_frame = img_as_ubyte(img_as_bool(resize(np.clip(frame, climit[0], climit[1]).astype(dtype=bool), (size[0], size[1]))))
+        out_frame = img_as_ubyte(resize(np.clip(frame, climit[0], climit[1]), (size[0], size[1])))
     return out_frame
 
 def dvs_to_aps(dvs_image, model, device):
