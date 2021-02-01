@@ -18,10 +18,11 @@ def save_ckp(state, checkpoint_dir, comb_filename):
 
 def load_ckp(checkpoint_dir, comb_filename, model, optimizer):
     checkpoint_fpath = os.path.join(checkpoint_dir,  comb_filename + '_checkpoint.pt')
+    print("Looking for: ", checkpoint_fpath)
     checkpoint = torch.load(checkpoint_fpath)
     model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer'])
-    return model, optimizer, checkpoint['epoch']
+    return model, optimizer, checkpoint['epoch'], checkpoint['test_error']
 
 def evaluate_checkpoint(checkpoint_dir, comb_filename):
     checkpoint_fpath = os.path.join(checkpoint_dir,  comb_filename + '_checkpoint.pt')
@@ -52,6 +53,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_keys',  nargs='+', default='aps_frame_48x64', help='Which dataset key (APS, DVS, etc.) to use.')
     parser.add_argument('--evaluate', action='store_true', help='Boolean variable to evaluate saved model.')
     parser.add_argument('--evaluate_ckp', action='store_true', help='Boolean variable to evaluate checkpoint.')
+    parser.add_argument('--calc_activity', action='store_true', help='Boolean variable to calculate activity.')
     # --- DVS Dataset related args --- #
     parser.add_argument('--dvs', action='store_true', help='Boolean value if we are using DVS data')
     parser.add_argument('--seperate_dvs_channels', action='store_true', help='DVS frames with seperated polarity channesl')
@@ -77,6 +79,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_keys_dvs',  nargs='+', default='dvs_frame_80x80', help='Dataset key for DVS.')
     parser.add_argument('--use_encoder', action='store_true', help='Use DVS encoder')
     parser.add_argument('--pretrained_ed_model', default='./saved_models/driving_cnn_19.4_multi_encoder_decoder', help='Encoder Decoder pretrained model')
+    parser.add_argument('--noise', default=0.0, type=float, help='Level of gaussian noise to be added')
     args = parser.parse_args()
 
     # Set seed
@@ -141,8 +144,12 @@ if __name__ == '__main__':
                               'inp_type': 'aps'}
             if args.hybrid:
                 network = Nets_Spiking_BNTT.HYBRID16_TBN(**model_args)
+                # network = Nets_Spiking_BNTT.HYBRID_VGG5_TBN(**model_args)
+                # network = Nets_Spiking_BNTT.AVSNN_TBN(**model_args)
             else:
-                network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
+                network = Nets_Spiking_BNTT.HYBRID16_TBN_FULL_SNN(**model_args)
+                # network = Nets_Spiking_BNTT.HYBRID_VGG5_TBN_FULL_SNN(**model_args)
+                # network = Nets_Spiking_BNTT.SNN_VGG9_TBN(**model_args)
         else:
             model_args = {'vgg_name': 'VGG16',
                           'activation': args.activation,
@@ -160,6 +167,8 @@ if __name__ == '__main__':
         #network = Nets.VGG16(num_channels = num_channels)
         #network = Nets.ResNet34(num_channels = num_channels)
         network = Nets.HYBRID_BASELINE(num_channels = num_channels, img_size=args.img_size)
+        # network = Nets.HYBRID_BASELINE_VGG5(num_channels = num_channels, img_size=args.img_size)
+        # network = Nets.ANN_AV_NN(num_channels = num_channels, img_size=args.img_size)
         if args.use_encoder:
             model_args = {'timesteps': args.timesteps,
                           'img_size': args.img_size,
@@ -172,7 +181,7 @@ if __name__ == '__main__':
             encoder_network.eval()
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # network = torch.nn.DataParallel(network, device_ids=[0, 1, 2, 3])
+    network = torch.nn.DataParallel(network, device_ids=[0])
     network.to(device)
     if encoder_network:
         encoder_network.to(device)
@@ -227,49 +236,39 @@ if __name__ == '__main__':
 
     if args.evaluate:
         # print("Evaluating {} on ({}, {})".format(args.run_id, h5fs, args.dataset_keys))
+        test_loss = 0
         network.load_state_dict(torch.load(os.path.join(args.result_dir, comb_filename)))
         network.eval()
         num_test_batches = 0
-        test_loss = 0
         for data in temp.flow(h5fs, args.dataset_keys, 'test_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
             vid_in_, bY = data
+            vid_in_ = vid_in_ + np.random.randn(*vid_in_.shape)*args.noise
             if args.use_encoder:
                 vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
             else:
-                vid_in = torch.from_numpy(vid_in_).to(device)
+                vid_in = torch.from_numpy(vid_in_).float().to(device)
             if bY.shape[0] != args.batch_size:
                 continue
-            y_pred = network(vid_in)
-            loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-            test_loss += loss.item()/args.batch_size
+            if args.calc_activity:
+                activity = network(vid_in, calc_activity = True)
+                print(activity)
+            else:
+                y_pred = network(vid_in)
+                loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
+                test_loss += loss.item()/args.batch_size
             num_test_batches += 1
+            if args.calc_activity:
+                break
         test_loss = np.sqrt(test_loss/num_test_batches)
         print("Test Avg RMSE: {}".format(test_loss))
-        """
-        num_test_batches = 0
-        test_loss = 0
-        for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
-            vid_in_, bY = data
-            if args.use_encoder:
-                vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
-            else:
-                vid_in = torch.from_numpy(vid_in_).to(device)
-            if bY.shape[0] != args.batch_size:
-                continue
-            y_pred = network(vid_in)
-            loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-            test_loss += loss.item()/args.batch_size
-            num_test_batches += 1
-        test_loss = np.sqrt(test_loss/num_test_batches)
-        print("Train Avg RMSE: {}".format(test_loss))
-        """
         sys.exit()
 
     try:
-        network, optimizer, start_epoch = load_ckp(args.checkpoint_dir, comb_filename, network, optimizer)
+        network, optimizer, start_epoch, prev_test_error = load_ckp(args.checkpoint_dir, comb_filename, network, optimizer)
         print("Found checkpoint. Resuming training ...")
     except:
         start_epoch = 0
+        prev_test_error = 1e7
         print("Checkpoint not found. Training from scratch ...")
 
     for t in range(start_epoch, args.num_epochs):
@@ -288,20 +287,37 @@ if __name__ == '__main__':
             train_loss = np.sqrt(train_loss/num_train_batches)
             print("Epoch: {}, Train Avg Error: {}".format(t, train_loss))
         else:
+            if args.calc_activity:
+                avg_activity = [0]*7
+                tot = 0
+            num_train_batches = 0
             for data in temp.flow(h5fs, args.dataset_keys, 'train_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels= args.seperate_dvs_channels):
                 vid_in_, bY = data
                 if args.use_encoder:
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
-                    vid_in = torch.from_numpy(vid_in_).to(device)
+                    vid_in = torch.from_numpy(vid_in_).float().to(device)
                 if bY.shape[0] != args.batch_size:
                     continue
-                y_pred = network(vid_in)
-                loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-                train_loss += loss.item()/args.batch_size
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                if args.calc_activity:
+                    network.eval()
+                    activity = network(vid_in, calc_activity = True)
+                    for i in range(4):
+                        avg_activity[i] = activity[i].cpu().numpy()
+                    tot += 1
+                    print(activity)
+                else:
+                    y_pred = network(vid_in)
+                    loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
+                    train_loss += loss.item()/args.batch_size
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                num_train_batches += 1
+            if args.calc_activity:
+                avg_activity = [x/tot for x in avg_activity]
+                print(avg_activity)
+                break
             train_loss = np.sqrt(train_loss/num_train_batches)
             print("Epoch: {}, Train Avg RMSE: {}".format(t, train_loss))
         test_loss = 0
@@ -316,17 +332,26 @@ if __name__ == '__main__':
             test_loss = np.sqrt(test_loss/num_test_batches)
             print("Epoch: {}, Test Avg Error: {}".format(t, test_loss))
         else:
+            num_test_batches = 0
             for data in temp.flow(h5fs, args.dataset_keys, 'test_idxs', batch_size=args.batch_size, shuffle=True, seperate_dvs_channels = args.seperate_dvs_channels):
                 vid_in_, bY = data
+                vid_in_ = vid_in_ + np.random.randn(*vid_in_.shape)*args.noise
                 if args.use_encoder:
                     vid_in = encoder_network(torch.from_numpy(vid_in_).to(device))
                 else:
-                    vid_in = torch.from_numpy(vid_in_).to(device)
+                    vid_in = torch.from_numpy(vid_in_).float().to(device)
                 if bY.shape[0] != args.batch_size:
                     continue
-                y_pred = network(vid_in)
-                loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
-                test_loss += loss.item()/args.batch_size
+                if args.calc_activity:
+                    activity = network(vid_in, calc_activity = True)
+                    print(activity)
+                else:
+                    y_pred = network(vid_in)
+                    loss = loss_fn(y_pred, torch.from_numpy(bY).to(device))
+                    test_loss += loss.item()/args.batch_size
+                num_test_batches += 1
+            if args.calc_activity:
+                break
             test_loss = np.sqrt(test_loss/num_test_batches)
             print("Epoch: {}, Test Avg RMSE: {}".format(t, test_loss))
         torch.save(network.state_dict(), os.path.join(args.result_dir, comb_filename))
@@ -337,6 +362,11 @@ if __name__ == '__main__':
             'train_error': train_loss,
             'test_error': test_loss
         }
-        save_ckp(checkpoint, args.result_dir, comb_filename)
+        if test_loss < prev_test_error:
+            print("Updating the checkpoint with better model")
+            save_ckp(checkpoint, args.result_dir, comb_filename)
+            prev_test_error = test_loss
+        else:
+            print("Skipping the checkpoint update. Model not better than the previous best")
         adjust_learning_rate(optimizer, t)
 
