@@ -198,7 +198,10 @@ def PoissonGen(inp, rescale_fac=2.0):
     return torch.mul(torch.le(rand_inp * rescale_fac, torch.abs(inp)).float(), torch.sign(inp))
 
 def SliceTimestep(inp, t, timesteps = 20):
-    out = inp[:, int(20*(t/timesteps)), :, :, :]
+    out = inp[:, int(20*(t/timesteps)): int(20*((t+1)/timesteps)), :, :, :]
+    print(out.shape)
+    out = torch.sum(out, dim=1)
+    print(out.shape)
     return out
 
 def deconv(in_planes, out_planes, batchNorm):
@@ -212,6 +215,177 @@ def deconv(in_planes, out_planes, batchNorm):
             nn.ConvTranspose2d(in_planes, out_planes, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.1, inplace=True))
 
+class AVSNN_TBN(nn.Module):
+    def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,
+                 leak_mem=0.99, img_size=32, inp_maps=3, c1_maps=64, c2_maps=64, ksize=3, fc0_size=200,
+                 num_cls=1000, drop_rate=0.5, use_max_out_over_time=False, timesteps = 10,
+                 inp_type = "aps"):
+        super(AVSNN_TBN, self).__init__()
+
+        self.resize_fn = transforms.Resize(img_size)
+
+        # ConvSNN architecture parameters
+        self.img_size = img_size
+        self.inp_maps = inp_maps
+        self.inp_type = inp_type
+        self.c1_maps = 64
+        self.c1_dim = self.img_size
+        self.c2_maps = 128
+        self.c3_maps = 256
+        self.c4_maps = 512
+
+
+        self.ksize = ksize
+        self.fc0_size = fc0_size
+        self.num_cls = num_cls
+
+        # ConvSNN simulation parameters
+        self.dt = dt
+        self.t_end = t_end
+        self.num_steps = int(self.t_end / self.dt)
+        self.num_steps = timesteps
+        self.inp_rate = inp_rate
+        self.inp_rescale_fac = 1.0 / (self.dt * self.inp_rate)
+        self.grad_type = grad_type
+        self.grad_type_pool = 'PassThru'
+        self.thresh_init_wnorm = thresh_init_wnorm
+        self.leak_mem = 0.99  # leak_mem
+        self.drop_rate = drop_rate
+        self.lnorm_ord = 2
+        self.scale_thresh = 1.0
+        self.use_max_out_over_time = use_max_out_over_time
+
+        self.dropout_layer = nn.Dropout2d(p=0.2)
+
+        self.one_stamp = 1
+        self.batch_num = self.num_steps // self.one_stamp
+
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print ("***** time step per batchnorm", self.batch_num)
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+        affine_flag = True
+
+
+        # Instantiate the ConvSNN layers
+        self.conv1 = nn.Conv2d(self.inp_maps, 16, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn1_list = nn.ModuleList([nn.BatchNorm2d(16, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn2_list = nn.ModuleList([nn.BatchNorm2d(32, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=self.ksize, stride=2, padding=1, bias=False)
+        self.bn3_list = nn.ModuleList([nn.BatchNorm2d(64, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=self.ksize, stride=2, padding=1, bias=False)
+        self.bn4_list = nn.ModuleList([nn.BatchNorm2d(128, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn5_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.fc1 = nn.Linear(6400//((80*80)//(self.img_size*self.img_size)), 2048, bias=False)
+        self.fc2 = nn.Linear(2048, self.num_cls, bias=False)
+
+        batchnormlist = [self.bn1_list, self.bn2_list, self.bn3_list, self.bn4_list, self.bn5_list]
+
+        # TODO turn off bias of batchnorm
+        for bnlist in batchnormlist:
+            for bnbn in bnlist:
+                bnbn.bias = None
+
+        # Initialize the firing thresholds of all the layers
+        for m in self.modules():
+            if (isinstance(m, nn.Conv2d)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+            elif (isinstance(m, nn.AvgPool2d)):
+                m.threshold = 0.75
+            elif (isinstance(m, nn.Linear)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+                if (self.thresh_init_wnorm):
+                    lnorm = LA.norm(m.weight.data, self.lnorm_ord)
+                    thresh_init = lnorm * self.scale_thresh
+                    m.threshold = torch.from_numpy(np.array([thresh_init])).float().cuda()
+                    print('Wl{}norm: {:.2f}; Threshold: {:.2f}\n'.format(self.lnorm_ord, lnorm, m.threshold[0]))
+
+        # Instantiate differentiable spiking nonlinearity
+        self.spike_fn = init_spike_fn(self.grad_type)
+        self.spike_pool = init_spike_fn(self.grad_type_pool)
+
+    def fc_init(self):
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+
+    def forward(self, inp):
+        # avg_spike_time = []
+        # Initialize the neuronal membrane potentials and dropout masks
+        batch_size = inp.shape[0]
+        mem_conv1 = torch.zeros(batch_size, 16, self.img_size//2, self.img_size//2).cuda()
+        mem_conv2 = torch.zeros(batch_size, 32, self.img_size//4, self.img_size//4).cuda()
+        mem_conv3 = torch.zeros(batch_size, 64, self.img_size//8, self.img_size//8).cuda()
+        mem_conv4 = torch.zeros(batch_size, 128, self.img_size//16, self.img_size//16).cuda()
+        mem_conv5 = torch.zeros(batch_size, 256, self.img_size//16, self.img_size//16).cuda()
+
+        for t in range(self.num_steps):
+            if self.inp_type == 'dvs':
+                spike_inp = SliceTimestep(inp, t, timesteps = self.num_steps)
+                spike_inp = self.resize_fn(spike_inp)
+            else:
+                inp = self.resize_fn(inp)
+                spike_inp = inp
+                # spike_inp = PoissonGen(inp)
+            # spike_x = torch.cat([spike_inp]*22,1)[:,:64,:,:]
+            out_prev = spike_inp
+
+            # Compute the conv1 outputs
+            mem_thr   = (mem_conv1/self.conv1.threshold) - 1.0
+            out       = self.spike_fn(mem_thr)
+            rst       = torch.zeros_like(mem_conv1).cuda()
+            rst[mem_thr>0] = self.conv1.threshold
+            mem_conv1 = (self.leak_mem*mem_conv1 + self.bn1_list[int(t/self.one_stamp)](self.conv1(out_prev)) -rst)
+            out_prev  = out.clone()
+
+            # Compute the conv2 outputs
+            mem_thr = (mem_conv2 / self.conv2.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv2).cuda()
+            rst[mem_thr > 0] = self.conv2.threshold
+            mem_conv2 = (self.leak_mem * mem_conv2 + self.bn2_list[int(t/self.one_stamp)](self.conv2(out_prev)) - rst)
+            out_prev = out.clone()
+
+            # Compute the conv3 outputs
+            mem_thr = (mem_conv3 / self.conv3.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv3).cuda()
+            rst[mem_thr > 0] = self.conv3.threshold
+            mem_conv3 = (self.leak_mem * mem_conv3 + self.bn3_list[int(t/self.one_stamp)](self.conv3(out_prev)) - rst)
+            out_prev = out.clone()
+
+            # Compute the conv4 outputs
+            mem_thr = (mem_conv4 / self.conv4.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv4).cuda()
+            rst[mem_thr > 0] = self.conv4.threshold
+            mem_conv4 = (self.leak_mem * mem_conv4 + self.bn4_list[int(t/self.one_stamp)](self.conv4(out_prev)) - rst)
+            out_prev = out.clone()
+
+            # Compute the conv5 outputs
+            mem_thr = (mem_conv5 / self.conv5.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv5).cuda()
+            rst[mem_thr > 0] = self.conv5.threshold
+            mem_conv5 = (self.leak_mem * mem_conv5 + self.bn5_list[int(t/self.one_stamp)](self.conv5(out_prev)) - rst)
+            # out_prev = out.clone()
+
+        out_voltage  = mem_conv5
+        out_voltage = (out_voltage) / self.num_steps
+        out = out.view(out.size(0), -1)
+        out = self.fc1(out)
+        out = self.fc2(out)
+
+        return out
+# ----------------------------------------------
 
 class HYBRID16_TBN(nn.Module):
     def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,
@@ -284,7 +458,7 @@ class HYBRID16_TBN(nn.Module):
         self.bn5_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
 
         ann_layers = []
-        cfg = [256, 'M', 512, 'M', 512, 'M']
+        cfg = [256, 'A', 512, 'A', 512, 'A']
         in_channels = 256
         for x in cfg:
             if x == 'M':
@@ -301,6 +475,7 @@ class HYBRID16_TBN(nn.Module):
 
 
         self.fc1 = nn.Linear(2048//((80*80)//(self.img_size*self.img_size)), 4096, bias=False)
+        # self.bn_fc = nn.BatchNorm1d(2048//((80*80)//(self.img_size*self.img_size)))
         # self.bnfc_list = nn.ModuleList([nn.BatchNorm1d( 4096, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
 
         self.fc2 = nn.Linear(4096, self.num_cls, bias=False)
@@ -339,7 +514,7 @@ class HYBRID16_TBN(nn.Module):
         torch.nn.init.xavier_uniform_(self.fc2.weight)
 
 
-    def forward(self, inp):
+    def forward(self, inp, calc_activity = False):
         # avg_spike_time = []
         # Initialize the neuronal membrane potentials and dropout masks
         batch_size = inp.shape[0]
@@ -350,7 +525,7 @@ class HYBRID16_TBN(nn.Module):
 
         mem_conv5 = torch.zeros(batch_size, 256, self.img_size//4, self.img_size//4).cuda()
 
-
+        activity = torch.zeros(4).cuda()
 
         for t in range(self.num_steps):
             if self.inp_type == 'dvs':
@@ -370,6 +545,8 @@ class HYBRID16_TBN(nn.Module):
             rst[mem_thr>0] = self.conv1.threshold
             mem_conv1 = (self.leak_mem*mem_conv1 + self.bn1_list[int(t/self.one_stamp)](self.conv1(out_prev)) -rst)
             out_prev  = out.clone()
+            if calc_activity:
+                activity[0] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
 
             # Compute the conv1_1 outputs
             mem_thr = (mem_conv1_1 / self.conv1_1.threshold) - 1.0
@@ -379,6 +556,8 @@ class HYBRID16_TBN(nn.Module):
             rst[mem_thr > 0] = self.conv1_1.threshold
             mem_conv1_1 = (self.leak_mem * mem_conv1_1 + self.bn1_1_list[int(t/self.one_stamp)](self.conv1_1(out_prev)) - rst)
             out_prev = out.clone()
+            if calc_activity:
+                activity[1] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
 
             # Compute the avgpool1 outputs
             out = self.pool1(out_prev)
@@ -391,6 +570,410 @@ class HYBRID16_TBN(nn.Module):
             rst[mem_thr > 0] = self.conv3.threshold
             mem_conv3 = (self.leak_mem * mem_conv3 + self.bn3_list[int(t/self.one_stamp)](self.conv3(out_prev)) - rst)
             out_prev = out.clone()
+            if calc_activity:
+                activity[2] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+            
+            # Compute the avgpool2 outputs
+            out = self.pool2(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv5 outputs
+            mem_thr = (mem_conv5 / self.conv5.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv5).cuda()
+            rst[mem_thr > 0] = self.conv5.threshold
+            mem_conv5 = (self.leak_mem * mem_conv5 + self.bn5_list[int(t/self.one_stamp)](self.conv5(out_prev)))
+            # out_prev = out.clone()
+            if calc_activity:
+                activity[3] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+        if calc_activity == True:
+            activity = [x / self.num_steps for x in activity]
+            return activity
+
+        out_voltage  = mem_conv5
+        out_voltage = (out_voltage) / self.num_steps
+        out = self.ann_layers(out_voltage)
+        out = out.view(out.size(0), -1)
+        # out = self.bn_fc(out)
+        out = self.fc1(out)
+        out = self.fc2(out)
+
+        return out
+# ----------------------------------------------
+
+class HYBRID_VGG5_TBN(nn.Module):
+    def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,
+                 leak_mem=0.99, img_size=32, inp_maps=3, c1_maps=64, c2_maps=64, ksize=3, fc0_size=200,
+                 num_cls=1000, drop_rate=0.5, use_max_out_over_time=False, timesteps = 10,
+                 inp_type = "aps"):
+        super(HYBRID_VGG5_TBN, self).__init__()
+
+        self.resize_fn = transforms.Resize(img_size)
+
+        # ConvSNN architecture parameters
+        self.img_size = img_size
+        self.inp_maps = inp_maps
+        self.inp_type = inp_type
+        self.c1_maps = 64
+        self.c1_dim = self.img_size
+        self.c2_maps = 128
+        self.c3_maps = 256
+        self.c4_maps = 512
+
+
+        self.ksize = ksize
+        self.fc0_size = fc0_size
+        self.num_cls = num_cls
+
+        # ConvSNN simulation parameters
+        self.dt = dt
+        self.t_end = t_end
+        self.num_steps = int(self.t_end / self.dt)
+        self.num_steps = timesteps
+        self.inp_rate = inp_rate
+        self.inp_rescale_fac = 1.0 / (self.dt * self.inp_rate)
+        self.grad_type = grad_type
+        self.grad_type_pool = 'PassThru'
+        self.thresh_init_wnorm = thresh_init_wnorm
+        self.leak_mem = 0.99  # leak_mem
+        self.drop_rate = drop_rate
+        self.lnorm_ord = 2
+        self.scale_thresh = 1.0
+        self.use_max_out_over_time = use_max_out_over_time
+
+        self.dropout_layer = nn.Dropout2d(p=0.2)
+
+        self.one_stamp = 1
+        self.batch_num = self.num_steps // self.one_stamp
+
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print ("***** time step per batchnorm", self.batch_num)
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+        affine_flag = True
+
+
+        # Instantiate the ConvSNN layers
+        self.conv1 = nn.Conv2d(self.inp_maps, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1_list = nn.ModuleList([nn.BatchNorm2d(64, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool1 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn2_list = nn.ModuleList([nn.BatchNorm2d(128, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool2 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn3_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        ann_layers = []
+        cfg = [512, 'A']
+        in_channels = 256
+        for x in cfg:
+            if x == 'M':
+                ann_layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            elif x == 'A':
+                ann_layers += [nn.AvgPool2d(kernel_size=2, stride=2)]
+            else:
+                ann_layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                           nn.BatchNorm2d(x),
+                           nn.ReLU(inplace=True)]
+                in_channels = x
+        ann_layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
+        self.ann_layers = nn.Sequential(*ann_layers)
+
+
+        self.fc1 = nn.Linear(10*10*512//((80*80)//(self.img_size*self.img_size)), 4096, bias=False)
+        # self.bnfc_list = nn.ModuleList([nn.BatchNorm1d( 4096, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.fc2 = nn.Linear(4096, self.num_cls, bias=False)
+
+
+        batchnormlist = [self.bn1_list, self.bn2_list, self.bn3_list]
+
+        # TODO turn off bias of batchnorm
+        for bnlist in batchnormlist:
+            for bnbn in bnlist:
+                bnbn.bias = None
+
+        # Initialize the firing thresholds of all the layers
+        for m in self.modules():
+            if (isinstance(m, nn.Conv2d)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+            elif (isinstance(m, nn.AvgPool2d)):
+                m.threshold = 0.75
+            elif (isinstance(m, nn.Linear)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+                if (self.thresh_init_wnorm):
+                    lnorm = LA.norm(m.weight.data, self.lnorm_ord)
+                    thresh_init = lnorm * self.scale_thresh
+                    m.threshold = torch.from_numpy(np.array([thresh_init])).float().cuda()
+                    print('Wl{}norm: {:.2f}; Threshold: {:.2f}\n'.format(self.lnorm_ord, lnorm, m.threshold[0]))
+
+        # Instantiate differentiable spiking nonlinearity
+        self.spike_fn = init_spike_fn(self.grad_type)
+        self.spike_pool = init_spike_fn(self.grad_type_pool)
+
+    def fc_init(self):
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+
+
+    def forward(self, inp, calc_activity = False):
+        # avg_spike_time = []
+        # Initialize the neuronal membrane potentials and dropout masks
+        batch_size = inp.shape[0]
+        mem_conv1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
+
+        mem_conv2 = torch.zeros(batch_size, 128, self.img_size//2, self.img_size//2).cuda()
+
+        mem_conv3 = torch.zeros(batch_size, 256, self.img_size//4, self.img_size//4).cuda()
+
+        activity = torch.zeros(4).cuda()
+
+        for t in range(self.num_steps):
+            if self.inp_type == 'dvs':
+                spike_inp = SliceTimestep(inp, t, timesteps = self.num_steps)
+                spike_inp = self.resize_fn(spike_inp)
+            else:
+                inp = self.resize_fn(inp)
+                spike_inp = inp
+                # spike_inp = PoissonGen(inp)
+            # spike_x = torch.cat([spike_inp]*22,1)[:,:64,:,:]
+            out_prev = spike_inp
+
+            # Compute the conv1 outputs
+            mem_thr   = (mem_conv1/self.conv1.threshold) - 1.0
+            out       = self.spike_fn(mem_thr)
+            rst       = torch.zeros_like(mem_conv1).cuda()
+            rst[mem_thr>0] = self.conv1.threshold
+            mem_conv1 = (self.leak_mem*mem_conv1 + self.bn1_list[int(t/self.one_stamp)](self.conv1(out_prev)) -rst)
+            out_prev  = out.clone()
+            if calc_activity:
+                activity[0] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool1 outputs
+            out = self.pool1(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv2 outputs
+            mem_thr = (mem_conv2 / self.conv2.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv2).cuda()
+            rst[mem_thr > 0] = self.conv2.threshold
+            mem_conv2 = (self.leak_mem * mem_conv2 + self.bn2_list[int(t/self.one_stamp)](self.conv2(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[1] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+            
+            # Compute the avgpool2 outputs
+            out = self.pool2(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv3 outputs
+            mem_thr = (mem_conv3 / self.conv3.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv3).cuda()
+            rst[mem_thr > 0] = self.conv3.threshold
+            mem_conv3 = (self.leak_mem * mem_conv3 + self.bn3_list[int(t/self.one_stamp)](self.conv3(out_prev)))
+            # out_prev = out.clone()
+            if calc_activity:
+                activity[3] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+        if calc_activity == True:
+            activity = [x / self.num_steps for x in activity]
+            return activity
+
+        out_voltage  = mem_conv3
+        out_voltage = (out_voltage) / self.num_steps
+        out = self.ann_layers(out_voltage)
+        out = out.view(out.size(0), -1)
+        out = self.fc1(out)
+        out = self.fc2(out)
+
+        return out
+# ----------------------------------------------
+
+class HYBRID16_TBN_FULL_SNN(nn.Module):
+    def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,
+                 leak_mem=0.99, img_size=32, inp_maps=3, c1_maps=64, c2_maps=64, ksize=3, fc0_size=200,
+                 num_cls=1000, drop_rate=0.5, use_max_out_over_time=False, timesteps = 10,
+                 inp_type = "aps"):
+        super(HYBRID16_TBN_FULL_SNN, self).__init__()
+
+        self.resize_fn = transforms.Resize(img_size)
+
+        # ConvSNN architecture parameters
+        self.img_size = img_size
+        self.inp_maps = inp_maps
+        self.inp_type = inp_type
+        self.c1_maps = 64
+        self.c1_dim = self.img_size
+        self.c2_maps = 128
+        self.c3_maps = 256
+        self.c4_maps = 512
+
+
+        self.ksize = ksize
+        self.fc0_size = fc0_size
+        self.num_cls = num_cls
+
+        # ConvSNN simulation parameters
+        self.dt = dt
+        self.t_end = t_end
+        self.num_steps = int(self.t_end / self.dt)
+        self.num_steps = timesteps
+        self.inp_rate = inp_rate
+        self.inp_rescale_fac = 1.0 / (self.dt * self.inp_rate)
+        self.grad_type = grad_type
+        self.grad_type_pool = 'PassThru'
+        self.thresh_init_wnorm = thresh_init_wnorm
+        self.leak_mem = 0.99  # leak_mem
+        self.drop_rate = drop_rate
+        self.lnorm_ord = 2
+        self.scale_thresh = 1.0
+        self.use_max_out_over_time = use_max_out_over_time
+
+        self.dropout_layer = nn.Dropout2d(p=0.2)
+
+        self.one_stamp = 1
+        self.batch_num = self.num_steps // self.one_stamp
+
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print ("***** time step per batchnorm", self.batch_num)
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+        affine_flag = True
+
+
+        # Instantiate the ConvSNN layers
+        self.conv1 = nn.Conv2d(self.inp_maps, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1_list = nn.ModuleList([nn.BatchNorm2d(64, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.conv1_1 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1_1_list = nn.ModuleList([nn.BatchNorm2d(64, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool1 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn3_list = nn.ModuleList([nn.BatchNorm2d(128, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool2 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn5_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv_a1 = nn.Conv2d(256, 256, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn_a1_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool_a1 = nn.AvgPool2d(kernel_size=2)
+        self.conv_a2 = nn.Conv2d(256, 512, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn_a2_list = nn.ModuleList([nn.BatchNorm2d(512, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool_a2 = nn.AvgPool2d(kernel_size=2)
+        self.conv_a3 = nn.Conv2d(512, 512, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn_a3_list = nn.ModuleList([nn.BatchNorm2d(512, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool_a3 = nn.AvgPool2d(kernel_size=2)
+
+
+        self.fc1 = nn.Linear(2048//((80*80)//(self.img_size*self.img_size)), 4096, bias=False)
+        # self.bn_fc = nn.BatchNorm1d(2048//((80*80)//(self.img_size*self.img_size)))
+        # self.bnfc_list = nn.ModuleList([nn.BatchNorm1d( 4096, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.fc2 = nn.Linear(4096, self.num_cls, bias=False)
+
+
+        batchnormlist = [self.bn1_list, self.bn1_1_list, self.bn3_list, self.bn5_list, self.bn_a1_list, self.bn_a2_list, self.bn_a3_list]
+
+        # TODO turn off bias of batchnorm
+        for bnlist in batchnormlist:
+            for bnbn in bnlist:
+                bnbn.bias = None
+
+        # Initialize the firing thresholds of all the layers
+        for m in self.modules():
+            if (isinstance(m, nn.Conv2d)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+            elif (isinstance(m, nn.AvgPool2d)):
+                m.threshold = 0.75
+            elif (isinstance(m, nn.Linear)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+                if (self.thresh_init_wnorm):
+                    lnorm = LA.norm(m.weight.data, self.lnorm_ord)
+                    thresh_init = lnorm * self.scale_thresh
+                    m.threshold = torch.from_numpy(np.array([thresh_init])).float().cuda()
+                    print('Wl{}norm: {:.2f}; Threshold: {:.2f}\n'.format(self.lnorm_ord, lnorm, m.threshold[0]))
+
+        # Instantiate differentiable spiking nonlinearity
+        self.spike_fn = init_spike_fn(self.grad_type)
+        self.spike_pool = init_spike_fn(self.grad_type_pool)
+
+    def fc_init(self):
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+
+
+    def forward(self, inp, calc_activity = False):
+        # avg_spike_time = []
+        # Initialize the neuronal membrane potentials and dropout masks
+        batch_size = inp.shape[0]
+        mem_conv1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
+        mem_conv1_1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
+
+        mem_conv3 = torch.zeros(batch_size, 128, self.img_size//2, self.img_size//2).cuda()
+
+        mem_conv5 = torch.zeros(batch_size, 256, self.img_size//4, self.img_size//4).cuda()
+
+        mem_conv_a1 = torch.zeros(batch_size, 256, self.img_size//4, self.img_size//4).cuda()
+        mem_conv_a2 = torch.zeros(batch_size, 512, self.img_size//8, self.img_size//8).cuda()
+        mem_conv_a3 = torch.zeros(batch_size, 512, self.img_size//16, self.img_size//16).cuda()
+        activity = torch.zeros(7).cuda()
+
+        for t in range(self.num_steps):
+            if self.inp_type == 'dvs':
+                spike_inp = SliceTimestep(inp, t, timesteps = self.num_steps)
+                spike_inp = self.resize_fn(spike_inp)
+            else:
+                inp = self.resize_fn(inp)
+                spike_inp = inp
+                # spike_inp = PoissonGen(inp)
+            # spike_x = torch.cat([spike_inp]*22,1)[:,:64,:,:]
+            out_prev = spike_inp
+
+            # Compute the conv1 outputs
+            mem_thr   = (mem_conv1/self.conv1.threshold) - 1.0
+            out       = self.spike_fn(mem_thr)
+            rst       = torch.zeros_like(mem_conv1).cuda()
+            rst[mem_thr>0] = self.conv1.threshold
+            mem_conv1 = (self.leak_mem*mem_conv1 + self.bn1_list[int(t/self.one_stamp)](self.conv1(out_prev)) -rst)
+            out_prev  = out.clone()
+            if calc_activity:
+                activity[0] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the conv1_1 outputs
+            mem_thr = (mem_conv1_1 / self.conv1_1.threshold) - 1.0
+
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv1_1).cuda()
+            rst[mem_thr > 0] = self.conv1_1.threshold
+            mem_conv1_1 = (self.leak_mem * mem_conv1_1 + self.bn1_1_list[int(t/self.one_stamp)](self.conv1_1(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[1] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool1 outputs
+            out = self.pool1(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv3 outputs
+            mem_thr = (mem_conv3 / self.conv3.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv3).cuda()
+            rst[mem_thr > 0] = self.conv3.threshold
+            mem_conv3 = (self.leak_mem * mem_conv3 + self.bn3_list[int(t/self.one_stamp)](self.conv3(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[2] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
             
             # Compute the avgpool2 outputs
             out = self.pool2(out_prev)
@@ -402,19 +985,264 @@ class HYBRID16_TBN(nn.Module):
             rst = torch.zeros_like(mem_conv5).cuda()
             rst[mem_thr > 0] = self.conv5.threshold
             mem_conv5 = (self.leak_mem * mem_conv5 + self.bn5_list[int(t/self.one_stamp)](self.conv5(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[3] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the conv_a1 outputs
+            mem_thr = (mem_conv_a1 / self.conv_a1.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv_a1).cuda()
+            rst[mem_thr > 0] = self.conv_a1.threshold
+            mem_conv_a1 = (self.leak_mem * mem_conv_a1 + self.bn_a1_list[int(t/self.one_stamp)](self.conv_a1(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[4] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool_a1 outputs
+            out = self.pool_a1(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv_a2 outputs
+            mem_thr = (mem_conv_a2 / self.conv_a2.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv_a2).cuda()
+            rst[mem_thr > 0] = self.conv_a2.threshold
+            mem_conv_a2 = (self.leak_mem * mem_conv_a2 + self.bn_a2_list[int(t/self.one_stamp)](self.conv_a2(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[5] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool_a2 outputs
+            out = self.pool_a2(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv_a3 outputs
+            mem_thr = (mem_conv_a3 / self.conv_a3.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv_a3).cuda()
+            rst[mem_thr > 0] = self.conv_a3.threshold
+            mem_conv_a3 = (self.leak_mem * mem_conv_a3 + self.bn_a3_list[int(t/self.one_stamp)](self.conv_a3(out_prev)))
             # out_prev = out.clone()
+            if calc_activity:
+                activity[6] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
 
+        if calc_activity == True:
+            activity = [x / self.num_steps for x in activity]
+            return activity
 
-
-        out_voltage  = mem_conv5
+        out_voltage = mem_conv_a3
         out_voltage = (out_voltage) / self.num_steps
-        out = self.ann_layers(out_voltage)
+        out = self.pool_a3(out_voltage)
+        # out = self.ann_layers(out_voltage)
+        out = out.view(out.size(0), -1)
+        # out = self.bn_fc(out)
+        out = self.fc1(out)
+        out = self.fc2(out)
+
+        return out
+# ----------------------------------------------
+
+class HYBRID_VGG5_TBN_FULL_SNN(nn.Module):
+    def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,
+                 leak_mem=0.99, img_size=32, inp_maps=3, c1_maps=64, c2_maps=64, ksize=3, fc0_size=200,
+                 num_cls=1000, drop_rate=0.5, use_max_out_over_time=False, timesteps = 10,
+                 inp_type = "aps"):
+        super(HYBRID_VGG5_TBN_FULL_SNN, self).__init__()
+
+        self.resize_fn = transforms.Resize(img_size)
+
+        # ConvSNN architecture parameters
+        self.img_size = img_size
+        self.inp_maps = inp_maps
+        self.inp_type = inp_type
+        self.c1_maps = 64
+        self.c1_dim = self.img_size
+        self.c2_maps = 128
+        self.c3_maps = 256
+        self.c4_maps = 512
+
+
+        self.ksize = ksize
+        self.fc0_size = fc0_size
+        self.num_cls = num_cls
+
+        # ConvSNN simulation parameters
+        self.dt = dt
+        self.t_end = t_end
+        self.num_steps = int(self.t_end / self.dt)
+        self.num_steps = timesteps
+        self.inp_rate = inp_rate
+        self.inp_rescale_fac = 1.0 / (self.dt * self.inp_rate)
+        self.grad_type = grad_type
+        self.grad_type_pool = 'PassThru'
+        self.thresh_init_wnorm = thresh_init_wnorm
+        self.leak_mem = 0.99  # leak_mem
+        self.drop_rate = drop_rate
+        self.lnorm_ord = 2
+        self.scale_thresh = 1.0
+        self.use_max_out_over_time = use_max_out_over_time
+
+        self.dropout_layer = nn.Dropout2d(p=0.2)
+
+        self.one_stamp = 1
+        self.batch_num = self.num_steps // self.one_stamp
+
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print ("***** time step per batchnorm", self.batch_num)
+        print (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+        affine_flag = True
+
+
+        # Instantiate the ConvSNN layers
+        self.conv1 = nn.Conv2d(self.inp_maps, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1_list = nn.ModuleList([nn.BatchNorm2d(64, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool1 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn2_list = nn.ModuleList([nn.BatchNorm2d(128, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool2 = nn.AvgPool2d(kernel_size=2)  # Default stride = kernel_size
+
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn3_list = nn.ModuleList([nn.BatchNorm2d(256, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.conv_a1 = nn.Conv2d(256, 512, kernel_size=self.ksize, stride=1, padding=1, bias=False)
+        self.bn_a1_list = nn.ModuleList([nn.BatchNorm2d(512, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+        self.pool_a1 = nn.AvgPool2d(kernel_size=2)
+
+
+        self.fc1 = nn.Linear(51200//((80*80)//(self.img_size*self.img_size)), 4096, bias=False)
+        # self.bnfc_list = nn.ModuleList([nn.BatchNorm1d( 4096, eps=1e-4, momentum=0.1, affine=affine_flag) for i in range(self.batch_num)])
+
+        self.fc2 = nn.Linear(4096, self.num_cls, bias=False)
+
+
+        batchnormlist = [self.bn1_list, self.bn2_list, self.bn3_list, self.bn_a1_list]
+
+        # TODO turn off bias of batchnorm
+        for bnlist in batchnormlist:
+            for bnbn in bnlist:
+                bnbn.bias = None
+
+        # Initialize the firing thresholds of all the layers
+        for m in self.modules():
+            if (isinstance(m, nn.Conv2d)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+            elif (isinstance(m, nn.AvgPool2d)):
+                m.threshold = 0.75
+            elif (isinstance(m, nn.Linear)):
+                m.threshold = 1.0
+                torch.nn.init.xavier_uniform_(m.weight, gain=2)
+                if (self.thresh_init_wnorm):
+                    lnorm = LA.norm(m.weight.data, self.lnorm_ord)
+                    thresh_init = lnorm * self.scale_thresh
+                    m.threshold = torch.from_numpy(np.array([thresh_init])).float().cuda()
+                    print('Wl{}norm: {:.2f}; Threshold: {:.2f}\n'.format(self.lnorm_ord, lnorm, m.threshold[0]))
+
+        # Instantiate differentiable spiking nonlinearity
+        self.spike_fn = init_spike_fn(self.grad_type)
+        self.spike_pool = init_spike_fn(self.grad_type_pool)
+
+    def fc_init(self):
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+
+
+    def forward(self, inp, calc_activity = False):
+        # avg_spike_time = []
+        # Initialize the neuronal membrane potentials and dropout masks
+        batch_size = inp.shape[0]
+        mem_conv1 = torch.zeros(batch_size, 64, self.img_size, self.img_size).cuda()
+
+        mem_conv2 = torch.zeros(batch_size, 128, self.img_size//2, self.img_size//2).cuda()
+
+        mem_conv3 = torch.zeros(batch_size, 256, self.img_size//4, self.img_size//4).cuda()
+
+        mem_conv_a1 = torch.zeros(batch_size, 512, self.img_size//4, self.img_size//4).cuda()
+
+        activity = torch.zeros(4).cuda()
+
+        for t in range(self.num_steps):
+            if self.inp_type == 'dvs':
+                spike_inp = SliceTimestep(inp, t, timesteps = self.num_steps)
+                spike_inp = self.resize_fn(spike_inp)
+            else:
+                inp = self.resize_fn(inp)
+                spike_inp = inp
+                # spike_inp = PoissonGen(inp)
+            # spike_x = torch.cat([spike_inp]*22,1)[:,:64,:,:]
+            out_prev = spike_inp
+
+            # Compute the conv1 outputs
+            mem_thr   = (mem_conv1/self.conv1.threshold) - 1.0
+            out       = self.spike_fn(mem_thr)
+            rst       = torch.zeros_like(mem_conv1).cuda()
+            rst[mem_thr>0] = self.conv1.threshold
+            mem_conv1 = (self.leak_mem*mem_conv1 + self.bn1_list[int(t/self.one_stamp)](self.conv1(out_prev)) -rst)
+            out_prev  = out.clone()
+            if calc_activity:
+                activity[0] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool1 outputs
+            out = self.pool1(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv2 outputs
+            mem_thr = (mem_conv2 / self.conv2.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv2).cuda()
+            rst[mem_thr > 0] = self.conv2.threshold
+            mem_conv2 = (self.leak_mem * mem_conv2 + self.bn2_list[int(t/self.one_stamp)](self.conv2(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[1] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+            
+            # Compute the avgpool2 outputs
+            out = self.pool2(out_prev)
+            out_prev = out.clone()
+
+            # Compute the conv3 outputs
+            mem_thr = (mem_conv3 / self.conv3.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv3).cuda()
+            rst[mem_thr > 0] = self.conv3.threshold
+            mem_conv3 = (self.leak_mem * mem_conv3 + self.bn3_list[int(t/self.one_stamp)](self.conv3(out_prev)) - rst)
+            out_prev = out.clone()
+            if calc_activity:
+                activity[2] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the conv_a1 outputs
+            mem_thr = (mem_conv_a1 / self.conv_a1.threshold) - 1.0
+            out = self.spike_fn(mem_thr)
+            rst = torch.zeros_like(mem_conv_a1).cuda()
+            rst[mem_thr > 0] = self.conv_a1.threshold
+            mem_conv_a1 = (self.leak_mem * mem_conv_a1 + self.bn_a1_list[int(t/self.one_stamp)](self.conv_a1(out_prev)))
+            out_prev = out.clone()
+            if calc_activity:
+                activity[3] += torch.count_nonzero(out.detach())/torch.numel(out.detach())
+
+            # Compute the avgpool_a1 outputs
+            out = self.pool_a1(out_prev)
+            out_prev = out.clone()
+
+        if calc_activity == True:
+            activity = [x / self.num_steps for x in activity]
+            return activity
+
+        out_voltage = mem_conv_a1
+        out_voltage = (out_voltage) / self.num_steps
+        out = self.pool_a1(out_voltage)
+        # out = self.ann_layers(out_voltage)
         out = out.view(out.size(0), -1)
         out = self.fc1(out)
         out = self.fc2(out)
 
         return out
 # ----------------------------------------------
+
+
 
 class SNN_VGG9_TBN(nn.Module):
     def __init__(self, dt=0.001, t_end=0.100, inp_rate=100, grad_type='Linear', thresh_init_wnorm=False,

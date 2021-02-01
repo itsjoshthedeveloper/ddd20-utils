@@ -43,6 +43,43 @@ class CNN_sample(nn.Module):
         x = self.fc2(x)
         return x
 
+class ANN_AV_NN(nn.Module):
+    def __init__(self, num_channels = 1, img_size = 80):
+        super(ANN_AV_NN, self).__init__()
+        self.resize_fn = transforms.Resize(img_size)
+        self.features, self.classifier = self._make_layers(img_size, in_channels = num_channels)
+
+    def forward(self, x):
+        x = self.resize_fn(x)
+        out = self.features(x)
+        out = out.view(out.size(0), -1)
+        out = self.classifier(out)
+        return out
+
+    def _make_layers(self, img_size, in_channels = 1):
+        # Instantiate the Conv layers
+        self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=3, stride=2, padding=1, bias=False)
+
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False)
+
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
+
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.fc1 = nn.Linear(6400//((80*80)//(img_size*img_size)), 2048, bias=False)
+        self.fc2 = nn.Linear(2048, 1, bias=False)
+
+        conv_list = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+
+        conv_layers = []
+        for i in range(5):
+            conv_layers += [conv_list[i],
+                            nn.BatchNorm2d((2**i)*16),
+                            nn.ReLU(inplace=True)]
+        fc_layers = [self.fc1, self.fc2]
+        return nn.Sequential(*conv_layers), nn.Sequential(*fc_layers)
 
 cfg = {
     'VGG9':  [64, 'M', 128, 256, 'M', 256, 512, 'M', 512, 'M', 512],
@@ -50,7 +87,8 @@ cfg = {
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-    'HYBRID_BASELINE': [64, 64, 'A', 128, 'A',256, 256, 'M', 512, 'M', 512, 'M'],
+    'HYBRID_BASELINE': [64, 64, 'A', 128, 'A',256, 256, 'A', 512, 'A', 512, 'A'],
+    'HYBRID_BASELINE_VGG5': [64,'A', 128, 'A', 256, 512, 'A'],
 }
 
 
@@ -61,11 +99,13 @@ class VGG(nn.Module):
         self.features = self._make_layers(cfg[model], in_channels = num_channels)
         if model == 'VGG9':
             self.classifier = nn.Linear(12800, 1)
+        elif model == 'HYBRID_BASELINE_VGG5':
+            self.classifier = nn.Linear(51200, 1)
         else:
             self.classifier = nn.Linear(2048//((80*80)//(img_size*img_size)), 1)
 
     def forward(self, x):
-        x = self.resize_fn(x)
+        x = self.resize_fn(x)   
         out = self.features(x)
         out = out.view(out.size(0), -1)
         out = self.classifier(out)
@@ -103,6 +143,10 @@ def VGG9(num_channels = 1):
 
 def HYBRID_BASELINE(num_channels = 1, img_size = 80):
     return VGG("HYBRID_BASELINE", num_channels = num_channels, img_size = img_size)
+
+def HYBRID_BASELINE_VGG5(num_channels = 1, img_size = 80):
+    return VGG("HYBRID_BASELINE_VGG5", num_channels = num_channels, img_size = img_size)
+
 
 class BasicBlock(nn.Module):
     expansion = 1
