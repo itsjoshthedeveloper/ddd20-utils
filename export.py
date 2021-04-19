@@ -148,7 +148,7 @@ if __name__ == '__main__':
         dtypes['dvs_channels'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
         dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
 
-    outfile = args.out_file or args.filename[:-5] + '_export.hdf5'
+    outfile = './exports/{}_{}.hdf5'.format(args.filename.split('/')[-1][:-5], args.out_file or 'export')
     f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
 
     current_row = {k: 0 for k in dtypes}
