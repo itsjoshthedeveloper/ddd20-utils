@@ -144,9 +144,12 @@ if __name__ == '__main__':
     if args.export_aps:
         dtypes['aps_frame'] = (np.uint8, DVS_SHAPE)
     if args.export_dvs:
-        dtypes['dvs_split'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
-        dtypes['dvs_channels'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
-        dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
+        if args.split_timesteps:
+            dtypes['dvs_split'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        elif args.seperate_dvs_channels:
+            dtypes['dvs_channels'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
+        else:
+            dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
 
     outfile = './exports/{}_{}.hdf5'.format(args.filename.split('/')[-1][:-5], args.out_file or 'export')
     f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
@@ -155,9 +158,12 @@ if __name__ == '__main__':
     if args.export_aps:
         current_row['aps_frame'] = np.zeros(DVS_SHAPE, dtype=np.uint8)
     if args.export_dvs:
-        current_row['dvs_split'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
-        current_row['dvs_channels'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
-        current_row['dvs_accum'] = np.zeros(DVS_SHAPE, dtype=np.int16)
+        if args.split_timesteps:
+            current_row['dvs_split'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        elif args.seperate_dvs_channels:
+            current_row['dvs_channels'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
+        else:
+            current_row['dvs_accum'] = np.zeros(DVS_SHAPE, dtype=np.int16)
 
     pbar = get_progress_bar()
     sys_ts, t_pre, t_offset, ev_count, pbar_next = 0, 0, 0, 0, 0
@@ -189,9 +195,12 @@ if __name__ == '__main__':
                 while t_pre + args.binsize < d['timestamp'] + t_offset:
                     # aps frame is not in current bin -> save and proceed
                     f_out.save(deepcopy(current_row))
-                    current_row['dvs_accum'] = 0
-                    current_row['dvs_channels'] = 0
-                    current_row['dvs_split'] = 0
+                    if args.split_timesteps:
+                        current_row['dvs_split'] = 0
+                    elif args.seperate_dvs_channels:
+                        current_row['dvs_channels'] = 0
+                    else:
+                        current_row['dvs_accum'] = 0
                     current_row['timestamp'] = t_pre
                     t_pre += args.binsize
             else:
@@ -225,9 +234,12 @@ if __name__ == '__main__':
                     if sel.stop < num_evts:
                         current_row['timestamp'] = t_pre
                         f_out.save(deepcopy(current_row))
-                        current_row['dvs_split'][:,:,:,:] = 0
-                        current_row['dvs_channels'][:,:,:] = 0
-                        current_row['dvs_accum'][:,:] = 0
+                        if args.split_timesteps:
+                            current_row['dvs_split'][:,:,:,:] = 0
+                        elif args.seperate_dvs_channels:
+                            current_row['dvs_channels'][:,:,:] = 0
+                        else:
+                            current_row['dvs_accum'][:,:] = 0
                         t_pre += args.binsize
             else:
                 # ------------------ Depricated ---------------------#
