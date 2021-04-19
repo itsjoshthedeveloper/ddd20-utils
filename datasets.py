@@ -97,8 +97,7 @@ class HDF5(mp.Process):
         for col,val in data.items():
             self.outbuffers[col].append(val)
             if len(self.outbuffers[col]) == self.chunk_size:
-                self[col][self.ptrs[col]:self.ptrs[col] + self.chunk_size] = \
-                        self._get_outbuf(col)
+                self[col][self.ptrs[col]:self.ptrs[col] + self.chunk_size] = self._get_outbuf(col)
                 self.outbuffers[col] = []
                 self.ptrs[col] += self.chunk_size
             if self.ptrs[col] == self.size[col]:

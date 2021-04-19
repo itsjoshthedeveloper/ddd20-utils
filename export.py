@@ -117,7 +117,7 @@ if __name__ == '__main__':
     parser.add_argument('filename')
     parser.add_argument('--tstart', type=int, default=0)
     parser.add_argument('--tstop', type=int)
-    parser.add_argument('--binsize', type=float, default=0.1)
+    parser.add_argument('--binsize', type=float, default=0.1) # 1, 0.5, 0.3, 0.1, 0.01
     parser.add_argument('--update_prog_every', type=float, default=0.01)
     parser.add_argument('--export_aps', type=int, default=1)
     parser.add_argument('--export_dvs', type=int, default=1)

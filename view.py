@@ -109,13 +109,10 @@ class HDF5Stream(mp.Process):
         return self.q[k].get(block, timeout)
 
     def _init_count(self, offset={}):
-        self.block_offset = {k: offset.get(k, 0) / CHUNK_SIZE
-                             for k in self.tables}
-        self.size = {k: len(self.f[k]['data']) - v * CHUNK_SIZE
-                     for k, v in self.block_offset.items()}
+        self.block_offset = {k: offset.get(k, 0) / CHUNK_SIZE for k in self.tables}
+        self.size = {k: len(self.f[k]['data']) - v * CHUNK_SIZE for k, v in self.block_offset.items()}
         self.blocks = {k: v / CHUNK_SIZE for k, v in self.size.items()}
-        self.blocks_rem = {
-            k: mp.Value(ctypes.c_double, v) for k, v in self.blocks.items() if v}
+        self.blocks_rem = {k: mp.Value(ctypes.c_double, v) for k, v in self.blocks.items() if v}
 
     def _init_time(self):
         self.ts_start = {}
@@ -125,12 +122,10 @@ class HDF5Stream(mp.Process):
             ts_start = self.f[k]['timestamp'][self.block_offset[k]*CHUNK_SIZE]
             self.ts_start[k] = mp.Value('L', ts_start)
             b = self.block_offset[k] + self.blocks_rem[k].value - 1
-            while b > self.block_offset[k] and \
-                    self.f[k]['timestamp'][b*CHUNK_SIZE] == 0:
+            while b > self.block_offset[k] and self.f[k]['timestamp'][b*CHUNK_SIZE] == 0:
                 b -= 1
             print(k, 'final block:', b)
-            self.ts_stop[k] = mp.Value(
-                'L', self.f[k]['timestamp'][(b + 1) * CHUNK_SIZE - 1])
+            self.ts_stop[k] = mp.Value('L', self.f[k]['timestamp'][(b + 1) * CHUNK_SIZE - 1])
             self.ind_stop[k] = b
 
     def init_search(self, t):
@@ -275,12 +270,7 @@ class MergedStream(mp.Process):
 
 
 class Interface(object):
-    def __init__(self,
-                 tmin=0, tmax=0,
-                 search_callback=None,
-                 update_callback=None,
-                 create_callback=None,
-                 destroy_callback=None):
+    def __init__(self, tmin=0, tmax=0, search_callback=None, update_callback=None, create_callback=None, destroy_callback=None):
         self.tmin, self.tmax = tmin, tmax
         self.search_callback = search_callback
         self.update_callback = update_callback
@@ -356,16 +346,13 @@ class Viewer(Interface):
                 # print('decreased playback speed to ',self.playback_speed)
             elif key_pressed == ord('b'):  # brighter
                 self.dvs_contrast = max(1, self.dvs_contrast-1)
-                print('increased DVS contrast to ', self.dvs_contrast,
-                      ' full scale event count')
+                print('increased DVS contrast to ', self.dvs_contrast, ' full scale event count')
             elif key_pressed == ord('d'):  # brighter
                 self.dvs_contrast = self.dvs_contrast+1
-                print('decreased DVS contrast to ', self.dvs_contrast,
-                      ' full scale event count')
+                print('decreased DVS contrast to ', self.dvs_contrast, ' full scale event count')
             elif key_pressed == ord(' '):  # toggle paused
                 self.paused = not self.paused
-                print('decreased DVS contrast to ', self.dvs_contrast,
-                      ' full scale event count')
+                print('decreased DVS contrast to ', self.dvs_contrast, ' full scale event count')
         if self.paused:
             while True:
                 key_paused = cv2.waitKey(1) or 0xff
@@ -380,8 +367,7 @@ class Viewer(Interface):
         if not self.t_pre.get(etype):
             self.t_pre[etype] = -1
         self.count[etype] = self.count.get(etype, 0) + 1
-        if etype == 'frame_event' and \
-                time.time() - self.t_pre[etype] > self.min_dt:
+        if etype == 'frame_event' and time.time() - self.t_pre[etype] > self.min_dt:
             if 'data' not in d:
                 unpack_data(d)
             img = (d['data'] / 256).astype(np.uint8)
@@ -414,8 +400,7 @@ class Viewer(Interface):
             if 'data' not in d:
                 unpack_data(d)
             # makes DVS image, but only from latest message
-            self.pol_img[d['data'][:, 2], d['data'][:, 1]] += \
-                (d['data'][:, 3]-.5)/self.dvs_contrast
+            self.pol_img[d['data'][:, 2], d['data'][:, 1]] += (d['data'][:, 3]-.5)/self.dvs_contrast
             if time.time() - self.t_pre[etype] > self.min_dt:
                 if self.zoom != 1:
                     self.pol_img = cv2.resize(
@@ -458,17 +443,11 @@ class Viewer(Interface):
         t = (c[0] + int(np.cos(a_rad) * r), c[1] - int(np.sin(a_rad) * r))
         cv2.line(img, c, t, self.display_color, 2, CV_AA)
         cv2.circle(img, c, r, self.display_color, 1, CV_AA)
-        cv2.line(img, (c[0]-r+5, c[1]), (c[0]-r, c[1]),
-                 self.display_color, 1, CV_AA)
-        cv2.line(img, (c[0]+r-5, c[1]), (c[0]+r, c[1]),
-                 self.display_color, 1, CV_AA)
-        cv2.line(img, (c[0], c[1]-r+5), (c[0], c[1]-r),
-                 self.display_color, 1, CV_AA)
-        cv2.line(img, (c[0], c[1]+r-5), (c[0], c[1]+r),
-                 self.display_color, 1, CV_AA)
-        cv2.putText(
-            img, '%0.1f deg' % a,
-            (c[0]-35, c[1]+30), self.font, 0.4, self.display_color, 1, CV_AA)
+        cv2.line(img, (c[0]-r+5, c[1]), (c[0]-r, c[1]), self.display_color, 1, CV_AA)
+        cv2.line(img, (c[0]+r-5, c[1]), (c[0]+r, c[1]), self.display_color, 1, CV_AA)
+        cv2.line(img, (c[0], c[1]-r+5), (c[0], c[1]-r), self.display_color, 1, CV_AA)
+        cv2.line(img, (c[0], c[1]+r-5), (c[0], c[1]+r), self.display_color, 1, CV_AA)
+        cv2.putText(img, '%0.1f deg' % a, (c[0]-35, c[1]+30), self.font, 0.4, self.display_color, 1, CV_AA)
 
     def _print(self, img, pos, name, unit, autohide=False):
         if name not in self.cache:
@@ -482,9 +461,7 @@ class Viewer(Interface):
             self.display_color, 1, CV_AA)
 
     def _print_string(self, img, pos, string):
-         cv2.putText(
-            img, '%s' % string,
-            (pos[0], pos[1]), self.font, 0.4, self.display_color, 1, CV_AA)
+        cv2.putText(img, '%s' % string, (pos[0], pos[1]), self.font, 0.4, self.display_color, 1, CV_AA)
 
     def _plot_timeline(self, img):
         pos = (50, 10)
@@ -589,11 +566,11 @@ if __name__ == '__main__':
     parser.add_argument('filename')
     parser.add_argument('--start', '-s', type=str, default=0.,
                         help="Examples:\n"
-                             "-s 50%% - play file starting at 50%%\n"
-                             "-s 66s - play file starting at 66s")
+                            "-s 50%% - play file starting at 50%%\n"
+                            "-s 66s - play file starting at 66s")
     parser.add_argument('--rotate', '-r', type=bool, default=True,
                         help="Rotate the scene 180 degrees if True, "
-                             "Otherwise False")
+                            "Otherwise False")
     args = parser.parse_args()
 
     fname = args.filename
@@ -618,8 +595,7 @@ if __name__ == '__main__':
             m.search(float(n_) * 1e6 + m.tmin)
     except:
         pass
-    v = Viewer(tmin=m.tmin * 1e-6, tmax=m.tmax * 1e-6,
-               zoom=1.41, rotate180=r180, update_callback=c.update)
+    v = Viewer(tmin=m.tmin * 1e-6, tmax=m.tmax * 1e-6, zoom=1.41, rotate180=r180, update_callback=c.update)
     # run main loop
     ts_reset = False
     while m.has_data:
@@ -652,7 +628,5 @@ if __name__ == '__main__':
         if time.time() - t > 1:
             print(chr(27) + "[2J")
             t = time.time()
-            print('fps:\n', '\n'.join(
-                ['  %s %s' % (
-                 k.ljust(20), v_) for k, v_ in v.count.items()]))
+            print('fps:\n', '\n'.join(['  %s %s' % (k.ljust(20), v_) for k, v_ in v.count.items()]))
             v.count = {k: 0 for k in v.count}
