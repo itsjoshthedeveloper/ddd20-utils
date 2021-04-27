@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
     for filename in args.filenames:
 
-        query = '{}{}_export_{}*.hdf5'.format(model_dir, filename, ('separate' if args.separate else ''))
+        query = '{}{}_export_{}bsize-*.hdf5'.format(model_dir, filename, ('separate_' if args.separate else ''))
         print('querying ' + query, end=' ', flush=True)
 
         temp_data = {}
