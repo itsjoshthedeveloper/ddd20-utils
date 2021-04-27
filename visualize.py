@@ -95,4 +95,8 @@ if __name__ == '__main__':
                     ax.imshow(img, cmap='gray')
 
     if args.mode == 'plot':
+        if multi_files:
+            plt.suptitle('binsize {}s'.format(args.bsizes[0]))
+        elif args.separate:
+            plt.suptitle(args.filenames[0])
         plt.show()
