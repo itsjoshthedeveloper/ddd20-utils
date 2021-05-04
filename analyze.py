@@ -15,6 +15,7 @@ if __name__ == '__main__':
     p.add_argument('--mode',        default='pixel',    type=str,   help='Mode', choices=['pixel','frame'])
     p.add_argument('--channels',    default=2,          type=int,   help='Number of channels')
     p.add_argument('--separate',    action='store_true')
+    p.add_argument('--clip',        action='store_true')
     args = p.parse_args()
 
     if len(args.filenames) > 1 and len(args.bsizes) > 1:
@@ -29,7 +30,7 @@ if __name__ == '__main__':
 
     for filename in args.filenames:
 
-        query = '{}{}_export_{}bsize-*.hdf5'.format(model_dir, filename, ('separate_' if args.separate else ''))
+        query = '{}{}_export_{}{}bsize-*.hdf5'.format(model_dir, filename, ('clip_' if args.clip else ''), ('separate_' if args.separate else ''))
         print('querying ' + query, end=' ', flush=True)
 
         temp_data = {}
@@ -128,7 +129,7 @@ if __name__ == '__main__':
     if not hist:
         ax.legend()  # Add a legend.
 
-    window_title = '{}_{}'.format(args.filenames[0], args.bsizes[0]) if hist else args.bsizes[0] if multi_files else args.filenames[0]
+    window_title = ('{}_{}'.format(args.filenames[0], args.bsizes[0]) if hist else args.bsizes[0] if multi_files else args.filenames[0]) + ('_separate' if args.separate else '')
     fig.canvas.set_window_title('{}_{}'.format(window_title, args.mode))
 
     plt.show()

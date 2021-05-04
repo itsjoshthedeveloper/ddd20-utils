@@ -7,12 +7,13 @@ import numpy as np
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('filenames', nargs='+')
-    p.add_argument('--start',       default=0,      type=float, help='Start time in secs', nargs='+')
+    p.add_argument('bsizes', type=float, help='Bin sizes', nargs='+')
+    p.add_argument('--start',       default=[0],      type=float, help='Start time in secs', nargs='+')
     p.add_argument('--length',      default=10,     type=int,   help='Length of window')
-    p.add_argument("--bsizes",      default=None,   type=float, help='Bin sizes', nargs='+')
     p.add_argument('--mode',        default='plot', type=str,   help='Mode', choices=['plot','analyze'])
     p.add_argument('--channels',    default=2,      type=int,   help='Number of channels')
     p.add_argument('--separate',    action='store_true')
+    p.add_argument('--clip',        action='store_true')
     args = p.parse_args()
 
     if len(args.filenames) > 1 and len(args.bsizes) > 1:
@@ -32,7 +33,7 @@ if __name__ == '__main__':
 
     for filename in args.filenames:
 
-        query = '{}{}_export_{}bsize-*.hdf5'.format(model_dir, filename, ('separate_' if args.separate else ''))
+        query = '{}{}_export_{}{}bsize-*.hdf5'.format(model_dir, filename, ('clip_' if args.clip else ''), ('separate_' if args.separate else ''))
         print('querying ' + query, end=' ', flush=True)
 
         temp_data = {}
@@ -54,6 +55,7 @@ if __name__ == '__main__':
         print()
 
     multi_files = len(export_data) > 1
+    hist = (not multi_files) and len(args.bsizes) == 1
 
     cols = args.length
     rows = len(export_data) if multi_files else (len(args.bsizes)*args.channels) if args.separate else len(args.bsizes)
@@ -81,7 +83,7 @@ if __name__ == '__main__':
                         elif args.separate:
                             plt.ylabel("{}s ch{}\n({}s)".format(binsize, c, start), rotation=0, labelpad=30)
                         else:
-                            plt.ylabel("{}s ({}s)".format(binsize, start), rotation=0, labelpad=20)
+                            plt.ylabel("{}s ({}s)".format(binsize, start), rotation=0, labelpad=40)
 
                     img = data[i][c] if args.separate else data[i]
 
@@ -89,14 +91,20 @@ if __name__ == '__main__':
                         print(filename, binsize, i, img.shape, np.unique(img), np.mean(img))
 
                     np.set_printoptions(suppress=True, formatter={'float_kind':'{:0.0f}'.format}, linewidth=36)
-                    plt.xlabel("{} ({:.6f})".format(np.unique(img), np.mean(img)), fontsize=4)
+                    plt.xlabel("{} ({:.6f})".format(np.unique(img), np.mean(img)), fontsize=6)
                     np.set_printoptions(suppress=False, formatter=None, linewidth=75)
 
-                    ax.imshow(img, cmap='gray')
+                    if args.clip:
+                        ax.imshow(img, cmap='gray', vmin=(0 if args.separate else -10), vmax=10)
+                    else:
+                        ax.imshow(img, cmap='gray')
 
     if args.mode == 'plot':
         if multi_files:
             plt.suptitle('binsize {}s'.format(args.bsizes[0]))
         elif args.separate:
             plt.suptitle(args.filenames[0])
+
+        window_title = ('{}_{}'.format(args.filenames[0], args.bsizes[0]) if hist else args.bsizes[0] if multi_files else args.filenames[0]) + ('_separate' if args.separate else '')
+        plt.get_current_fig_manager().canvas.set_window_title('vis_{}'.format(window_title))
         plt.show()

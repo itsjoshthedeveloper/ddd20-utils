@@ -125,6 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--seperate_dvs_channels', action='store_true')
     parser.add_argument('--split_timesteps', action='store_true')
     parser.add_argument('--timesteps', type=int, default=10)
+    parser.add_argument('--clip', action='store_true')
     args = parser.parse_args()
 
     f_in = HDF5Stream(args.filename, export_data_vi.union({'dvs'}))
@@ -151,7 +152,7 @@ if __name__ == '__main__':
         else:
             dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
 
-    outfile = './exports/{}_{}.hdf5'.format(args.filename.split('/')[-1][:-5], args.out_file or 'export')
+    outfile = args.out_file or './exports/{}_export_{}{}bsize-{}.hdf5'.format(args.filename.split('/')[-1][:-5], ('clip_' if args.clip else ''), ('separate_' if args.seperate_dvs_channels else ''), args.binsize)
     f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
 
     current_row = {k: 0 for k in dtypes}
@@ -233,6 +234,13 @@ if __name__ == '__main__':
                     # wait for more data
                     if sel.stop < num_evts:
                         current_row['timestamp'] = t_pre
+                        if args.clip:
+                            if args.split_timesteps:
+                                current_row['dvs_split'] = np.clip(current_row['dvs_split'], 0, 10)
+                            elif args.seperate_dvs_channels:
+                                current_row['dvs_channels'] = np.clip(current_row['dvs_channels'], 0, 10)
+                            else:
+                                current_row['dvs_accum'] = np.clip(current_row['dvs_accum'], -10, 10)
                         f_out.save(deepcopy(current_row))
                         if args.split_timesteps:
                             current_row['dvs_split'][:,:,:,:] = 0
