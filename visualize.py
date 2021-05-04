@@ -7,8 +7,8 @@ import numpy as np
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('filenames', nargs='+')
-    p.add_argument('bsizes', type=float, help='Bin sizes', nargs='+')
-    p.add_argument('--start',       default=[0],      type=float, help='Start time in secs', nargs='+')
+    p.add_argument('--bsizes',      default=[0.01], type=float, help='Bin sizes', nargs='+')
+    p.add_argument('--start',       default=[0],    type=float, help='Start time in secs', nargs='+')
     p.add_argument('--length',      default=10,     type=int,   help='Length of window')
     p.add_argument('--mode',        default='plot', type=str,   help='Mode', choices=['plot','analyze'])
     p.add_argument('--channels',    default=2,      type=int,   help='Number of channels')
@@ -90,8 +90,8 @@ if __name__ == '__main__':
                     if args.mode == 'analyze':
                         print(filename, binsize, i, img.shape, np.unique(img), np.mean(img))
 
-                    np.set_printoptions(suppress=True, formatter={'float_kind':'{:0.0f}'.format}, linewidth=36)
-                    plt.xlabel("{} ({:.6f})".format(np.unique(img), np.mean(img)), fontsize=6)
+                    np.set_printoptions(suppress=True, formatter={'float_kind':'{:0.0f}'.format}, linewidth=28)
+                    plt.xlabel("{} ({:.3f})".format(np.unique(img), np.mean(img)), fontsize=6)
                     np.set_printoptions(suppress=False, formatter=None, linewidth=75)
 
                     if args.clip:
