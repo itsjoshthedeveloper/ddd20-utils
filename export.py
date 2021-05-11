@@ -80,7 +80,7 @@ def get_progress_bar():
             return pbar()
     return tqdm(total=(tstop-tstart)/1e6, unit_scale=True)
 
-def raster_evts(data, seperate_dvs_channels = False, split_timesteps = False, timesteps = 10):
+def raster_evts(data, separate_dvs_channels = False, split_timesteps = False, timesteps = 10):
     _histrange = [(0, v) for v in DVS_SHAPE]
     if split_timesteps:
         img = []
@@ -107,7 +107,7 @@ def raster_evts(data, seperate_dvs_channels = False, split_timesteps = False, ti
     img_off, _, _ = np.histogram2d(
             data[pol_off, 2], data[pol_off, 1],
             bins=DVS_SHAPE, range=_histrange)
-    if seperate_dvs_channels:
+    if separate_dvs_channels:
         return np.stack([img_on.astype(np.int16), img_off.astype(np.int16)])
     return (img_on - img_off).astype(np.int16)
 
@@ -121,14 +121,17 @@ if __name__ == '__main__':
     parser.add_argument('--update_prog_every', type=float, default=0.01)
     parser.add_argument('--export_aps', type=int, default=1)
     parser.add_argument('--export_dvs', type=int, default=1)
-    parser.add_argument('--out_file', default='')
-    parser.add_argument('--seperate_dvs_channels', action='store_true')
+    parser.add_argument('--separate_dvs_channels', action='store_true')
     parser.add_argument('--split_timesteps', action='store_true')
     parser.add_argument('--timesteps', type=int, default=10)
     parser.add_argument('--clip', action='store_true')
+    parser.add_argument('--disable_tqdm', action='store_true')
+    parser.add_argument('--time_of_day', default='', type=str, help='Day or night')
     args = parser.parse_args()
 
-    f_in = HDF5Stream(args.filename, export_data_vi.union({'dvs'}))
+    data_dir = './data/'
+
+    f_in = HDF5Stream((data_dir + args.filename), export_data_vi.union({'dvs'}))
     m = MergedStream(f_in)
 
     fixed_dt = args.binsize > 0
@@ -147,13 +150,26 @@ if __name__ == '__main__':
     if args.export_dvs:
         if args.split_timesteps:
             dtypes['dvs_split'] = (np.int16, (args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]))
-        elif args.seperate_dvs_channels:
+        elif args.separate_dvs_channels:
             dtypes['dvs_channels'] = (np.int16, (2, DVS_SHAPE[0], DVS_SHAPE[1]))
         else:
             dtypes['dvs_accum'] = (np.int16, DVS_SHAPE)
 
-    outfile = args.out_file or './exports/{}_export_{}{}bsize-{}.hdf5'.format(args.filename.split('/')[-1][:-5], ('clip_' if args.clip else ''), ('separate_' if args.seperate_dvs_channels else ''), args.binsize)
-    f_out = HDF5(outfile, dtypes, mode='w', chunksize=8, compression='gzip')
+    out_dir = 'exports'
+    date = args.filename.split('/')[-2]
+    rec_id = args.filename.split('/')[-1][:-5]
+
+    outpath = './'
+    for d in [out_dir, args.time_of_day, date]:
+        if d:
+            outpath += d + '/'
+            try:
+                os.mkdir(outpath)
+            except OSError:
+                pass
+
+    outpath += '{}_export_{}{}bsize-{}.hdf5'.format(rec_id, ('clip_' if args.clip else ''), ('separate_' if args.separate_dvs_channels else ''), args.binsize)
+    f_out = HDF5(outpath, dtypes, mode='w', chunksize=8, compression='gzip')
 
     current_row = {k: 0 for k in dtypes}
     if args.export_aps:
@@ -161,12 +177,13 @@ if __name__ == '__main__':
     if args.export_dvs:
         if args.split_timesteps:
             current_row['dvs_split'] = np.zeros((args.timesteps, 2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
-        elif args.seperate_dvs_channels:
+        elif args.separate_dvs_channels:
             current_row['dvs_channels'] = np.zeros((2, DVS_SHAPE[0], DVS_SHAPE[1]), dtype=np.int16)
         else:
             current_row['dvs_accum'] = np.zeros(DVS_SHAPE, dtype=np.int16)
 
-    pbar = get_progress_bar()
+    if not args.disable_tqdm:
+        pbar = get_progress_bar()
     sys_ts, t_pre, t_offset, ev_count, pbar_next = 0, 0, 0, 0, 0
     while m.has_data and sys_ts <= tstop*1e-6:
         try:
@@ -198,7 +215,7 @@ if __name__ == '__main__':
                     f_out.save(deepcopy(current_row))
                     if args.split_timesteps:
                         current_row['dvs_split'] = 0
-                    elif args.seperate_dvs_channels:
+                    elif args.separate_dvs_channels:
                         current_row['dvs_channels'] = 0
                     else:
                         current_row['dvs_accum'] = 0
@@ -222,10 +239,10 @@ if __name__ == '__main__':
                     # take n events
                     n = (times[offset:] < t_pre + args.binsize).sum()
                     sel = slice(offset, offset + n)
-                    x = raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
+                    x = raster_evts(d['data'][sel], separate_dvs_channels = args.separate_dvs_channels, split_timesteps = args.split_timesteps, timesteps = args.timesteps)
                     if args.split_timesteps:
                         current_row['dvs_split'] += x
-                    elif args.seperate_dvs_channels:
+                    elif args.separate_dvs_channels:
                         current_row['dvs_channels'] += x
                     else:
                         current_row['dvs_accum'] += x
@@ -237,14 +254,14 @@ if __name__ == '__main__':
                         if args.clip:
                             if args.split_timesteps:
                                 current_row['dvs_split'] = np.clip(current_row['dvs_split'], 0, 10)
-                            elif args.seperate_dvs_channels:
+                            elif args.separate_dvs_channels:
                                 current_row['dvs_channels'] = np.clip(current_row['dvs_channels'], 0, 10)
                             else:
                                 current_row['dvs_accum'] = np.clip(current_row['dvs_accum'], -10, 10)
                         f_out.save(deepcopy(current_row))
                         if args.split_timesteps:
                             current_row['dvs_split'][:,:,:,:] = 0
-                        elif args.seperate_dvs_channels:
+                        elif args.separate_dvs_channels:
                             current_row['dvs_channels'][:,:,:] = 0
                         else:
                             current_row['dvs_accum'][:,:] = 0
@@ -256,7 +273,7 @@ if __name__ == '__main__':
                 for _ in range(int(num_samples)):
                     n = min(int(-args.binsize - ev_count), num_evts - offset)
                     sel = slice(offset, offset + n)
-                    current_row['dvs_frame'] += raster_evts(d['data'][sel], seperate_dvs_channels = args.seperate_dvs_channels)
+                    current_row['dvs_frame'] += raster_evts(d['data'][sel], separate_dvs_channels = args.separate_dvs_channels)
                     if sel.stop > sel.start:
                         current_row['timestamp'] = times[sel].mean()
                     offset += n
@@ -265,11 +282,13 @@ if __name__ == '__main__':
                         f_out.save(deepcopy(current_row))
                         current_row['dvs_frame'][:,:] = 0
                         ev_count = 0
-        pbar_curr = int((sys_ts - tstart * 1e-6) / args.update_prog_every)
-        if pbar_curr > pbar_next:
-            pbar.update(args.update_prog_every)
-            pbar_next = pbar_curr
-    pbar.close()
+        if not args.disable_tqdm:
+            pbar_curr = int((sys_ts - tstart * 1e-6) / args.update_prog_every)
+            if pbar_curr > pbar_next:
+                pbar.update(args.update_prog_every)
+                pbar_next = pbar_curr
+    if not args.disable_tqdm:
+        pbar.close()
     print('[DEBUG] sys_ts/tstop', sys_ts, tstop*1e-6)
     m.exit.set()
     f_out.exit.set()
@@ -283,8 +302,8 @@ if __name__ == '__main__':
     print('[DEBUG] stream joined')
     m.join()
     print('[DEBUG] merger joined')
-    filesize = os.path.getsize(outfile)
-    print('Finished.  Wrote {:.1f}MiB to {}.'.format(filesize/1024**2, outfile))
+    filesize = os.path.getsize(outpath)
+    print('Finished.  Wrote {:.1f}MiB to {}.'.format(filesize/1024**2, outpath))
 
     time.sleep(1)
     os._exit(0)
