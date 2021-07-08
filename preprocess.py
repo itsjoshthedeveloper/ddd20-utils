@@ -51,7 +51,7 @@ if __name__ == '__main__':
     temp_data = {}
     for key in export_data:
         temp_data[key] = []
-    for frame_idx in tqdm_wrapper(num_frames, desc='removing frames', disabled=args.disable_tqdm):
+    for frame_idx in tqdm_wrapper(range(num_frames), desc='removing frames', disabled=args.disable_tqdm):
         event_count = np.sum(export_data['dvs_frame'][frame_idx])
         if event_count >= args.min and event_count <= (args.max * frame_intensity_range):
             for key in export_data:
