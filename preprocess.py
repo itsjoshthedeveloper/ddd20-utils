@@ -48,15 +48,19 @@ if __name__ == '__main__':
     frame_intensity_range = np.ptp(counts)
     print('found range of {} [{}-{}]'.format(frame_intensity_range, np.min(counts), np.max(counts)))
 
-    temp_data = []
-    for frame in tqdm_wrapper(export_data['dvs_frame'], desc='removing frames', disabled=args.disable_tqdm):
-        event_count = np.sum(frame)
+    temp_data = {}
+    for key in export_data:
+        temp_data[key] = []
+    for frame_idx in tqdm_wrapper(num_frames, desc='removing frames', disabled=args.disable_tqdm):
+        event_count = np.sum(export_data['dvs_frame'][frame_idx])
         if event_count >= args.min and event_count <= (args.max * frame_intensity_range):
-            temp_data.append(frame)
-    num_removed = num_frames-len(temp_data)
-    print('removed {}% ({} frames) with {} frames left'.format(round(num_removed/num_frames*100, 2), num_removed, len(temp_data)))
+            for key in export_data:
+                temp_data[key].append(export_data[key][frame_idx])
+    num_removed = num_frames-len(temp_data['dvs_frame'])
+    print('removed {}% ({} frames) with {} frames left'.format(round(num_removed/num_frames*100, 2), num_removed, len(temp_data['dvs_frame'])))
 
-    export_data['dvs_frame'] = np.stack(temp_data)
+    for key in export_data:
+        export_data[key] = np.stack(temp_data[key])
 
     path = ''
     for d in [args.out_dir, args.time_of_day, date]:
