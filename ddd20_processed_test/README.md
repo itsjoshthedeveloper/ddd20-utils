@@ -1,5 +1,7 @@
 # DDD20 Pre-processed Dataset
 
+## Overview
+
 A spreadsheet detailing the attributes of each recording can be found [here](https://docs.google.com/spreadsheets/d/1k-Gm74Crad_ip9V6S9RFdLQW4hC0nHdlMVdRJZrXy30/edit?usp=sharing).
 
 The following steps were taken to transform the original event data into standardized frames.
@@ -68,3 +70,28 @@ ddd20_processed/
         ├── rec1499656391.hdf5
         └── rec1499657850.hdf5
 ```
+
+## File Details
+
+| Data Structure | Key | Shape | Type |
+| -- | -- | -- | -- |
+| HDF5 dataset | accelerator_pedal_position | (N,) | float64 |
+| HDF5 dataset | aps_frame | (N, 260, 346) | uint8 |
+| HDF5 dataset | brake_pedal_status | (N,) | float64 |
+| HDF5 dataset | dvs_frame | (N, 2, 260, 346) | int16 |
+| HDF5 dataset | engine_speed | (N,) | float64 |
+| HDF5 dataset | fuel_consumed_since_restart | (N,) | float64 |
+| HDF5 dataset | fuel_level | (N,) | float64 |
+| HDF5 dataset | headlamp_status | (N,) | float64 |
+| HDF5 dataset | high_beam_status | (N,) | float64 |
+| HDF5 dataset | ignition_status | (N,) | float64 |
+| HDF5 dataset | latitude | (N,) | float64 |
+| HDF5 dataset | longitude | (N,) | float64 |
+| HDF5 dataset | odometer | (N,) | float64 |
+| HDF5 dataset | parking_brake_status | (N,) | float64 |
+| HDF5 dataset | steering_wheel_angle | (N,) | float64 |
+| HDF5 dataset | timestamp | (N,) | float64 |
+| HDF5 dataset | torque_at_transmission | (N,) | float64 |
+| HDF5 dataset | transmission_gear_position | (N,) | float64 |
+| HDF5 dataset | vehicle_speed | (N,) | float64 |
+| HDF5 dataset | windshield_wiper_status | (N,) | float64 |
